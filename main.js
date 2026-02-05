@@ -22,7 +22,7 @@ const gunzip = promisify(zlib.gunzip);
 
 const { generateXrayConfig } = require('./utils');
 const { generateFingerprint, normalizeFingerprintSpec, getInjectScript } = require('./fingerprint');
-const { normalizeProxySpec } = require('./proxy/proxySpec');
+const { normalizeProxySpec, normalizeProxyInputRaw } = require('./proxy/proxySpec');
 const { buildSingboxConfigFromProxySpec } = require('./proxy/singboxConfig');
 const { downloadFile, extractZip, isZipFileHeader, sha256FileHex } = require('./updateUtils');
 
@@ -795,13 +795,17 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto') {
     const startedAt = Date.now();
     let proxyProcess = null;
     let lastErr = null;
-    const primary = engineHint && engineHint !== 'auto' ? engineHint : inferProxyTestEngine(proxyStr);
+    const normalizedProxyStr = normalizeProxyInputRaw(proxyStr);
+    if (!normalizedProxyStr) {
+        return { success: false, ok: false, startedAt, durationMs: Date.now() - startedAt, error: 'Proxy input is empty', code: 'PROXY_TEST_EMPTY' };
+    }
+    const primary = engineHint && engineHint !== 'auto' ? engineHint : inferProxyTestEngine(normalizedProxyStr);
     const engines = primary === 'sing-box' ? ['sing-box', 'xray'] : ['xray', 'sing-box'];
 
     try {
         for (const engine of engines) {
             try {
-                const started = await startProxyProcessForTest({ engine, proxyStr, localPort: tempPort, configPath: tempConfigPath });
+                const started = await startProxyProcessForTest({ engine, proxyStr: normalizedProxyStr, localPort: tempPort, configPath: tempConfigPath });
                 proxyProcess = started && started.process ? started.process : null;
                 const resolvedEngine = started && started.engine ? started.engine : engine;
 

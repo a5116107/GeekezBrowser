@@ -1,6 +1,6 @@
 const { Base64 } = require('js-base64');
 const { URL } = require('url');
-const { normalizeProxySpec } = require('./proxy/proxySpec');
+const { normalizeProxySpec, normalizeProxyInputRaw } = require('./proxy/proxySpec');
 
 function decodeBase64Content(str) {
     try {
@@ -34,11 +34,17 @@ function parseProxyLink(link, tag) {
             routeOnly: true
         }
     };
-    link = link.trim();
+    link = normalizeProxyInputRaw(link);
+    if (!link) {
+        const e = new Error('Proxy input is empty');
+        e.code = 'PROXY_LINK_EMPTY';
+        throw e;
+    }
+    const lower = link.toLowerCase();
 
     try {
-        if (link.startsWith('vmess://')) {
-            const base64Str = link.replace('vmess://', '');
+        if (lower.startsWith('vmess://')) {
+            const base64Str = link.replace(/^vmess:\/\//i, '');
             const configStr = decodeBase64Content(base64Str);
             const vmess = JSON.parse(configStr);
 
@@ -70,17 +76,18 @@ function parseProxyLink(link, tag) {
                 };
             }
         }
-        else if (link.startsWith('vless://')) {
+        else if (lower.startsWith('vless://')) {
             const urlObj = new URL(link);
             const params = urlObj.searchParams;
             const security = params.get("security") || "none";
             let type = params.get("type") || "tcp";
+            const port = (urlObj.port && Number.isFinite(parseInt(urlObj.port))) ? parseInt(urlObj.port) : 443;
 
             outbound.protocol = "vless";
             outbound.settings = {
                 vnext: [{
                     address: urlObj.hostname,
-                    port: parseInt(urlObj.port),
+                    port: port,
                     users: [{
                         id: urlObj.username,
                         encryption: params.get("encryption") || "none",
@@ -126,13 +133,14 @@ function parseProxyLink(link, tag) {
                 };
             }
         }
-        else if (link.startsWith('trojan://')) {
+        else if (lower.startsWith('trojan://')) {
             const urlObj = new URL(link);
             const params = urlObj.searchParams;
             const type = params.get("type") || "tcp";
+            const port = (urlObj.port && Number.isFinite(parseInt(urlObj.port))) ? parseInt(urlObj.port) : 443;
 
             outbound.protocol = "trojan";
-            outbound.settings = { servers: [{ address: urlObj.hostname, port: parseInt(urlObj.port), password: urlObj.username }] };
+            outbound.settings = { servers: [{ address: urlObj.hostname, port: port, password: urlObj.username }] };
             outbound.streamSettings = {
                 network: type,
                 security: params.get("security") || "tls",
@@ -141,8 +149,8 @@ function parseProxyLink(link, tag) {
                 grpcSettings: type === 'grpc' ? { serviceName: params.get("serviceName") } : undefined
             };
         }
-        else if (link.startsWith('ss://')) {
-            let raw = link.replace('ss://', '');
+        else if (lower.startsWith('ss://')) {
+            let raw = link.replace(/^ss:\/\//i, '');
             if (raw.includes('#')) raw = raw.split('#')[0];
             let method, password, host, port;
 
@@ -219,7 +227,7 @@ function parseProxyLink(link, tag) {
                 enabled: false,
                 concurrency: -1
             };
-        } else if (link.startsWith('socks')) {
+        } else if (lower.startsWith('socks')) {
             // Support two SOCKS5 formats:
             // 1. v2rayN format: socks://base64(user:pass)@host:port#remark
             // 2. Standard format: socks://user:pass@host:port
@@ -227,7 +235,7 @@ function parseProxyLink(link, tag) {
             outbound.protocol = "socks";
 
             // Remove socks:// or socks5://
-            let cleanLink = link.replace(/^socks5?:\/\//, '');
+            let cleanLink = link.replace(/^socks5?:\/\//i, '');
 
             // Extract remark if exists (after #)
             const hashIndex = cleanLink.indexOf('#');
@@ -269,7 +277,7 @@ function parseProxyLink(link, tag) {
             }
 
             // Parse server part (host:port)
-            const colonIndex = serverPart.indexOf(':');
+            const colonIndex = serverPart.lastIndexOf(':');
             const address = colonIndex !== -1 ? serverPart.substring(0, colonIndex) : serverPart;
             const port = colonIndex !== -1 ? parseInt(serverPart.substring(colonIndex + 1)) : 1080;
 
@@ -305,10 +313,18 @@ function parseProxyLink(link, tag) {
             } else {
                 throw new Error("Invalid IP:Port:User:Pass format");
             }
-        } else if (link.startsWith('http')) {
+        } else if (lower.startsWith('http')) {
             const urlObj = new URL(link);
+            const port = (urlObj.port && Number.isFinite(parseInt(urlObj.port))) ? parseInt(urlObj.port) : (urlObj.protocol === 'https:' ? 443 : 80);
             outbound.protocol = "http";
-            outbound.settings = { servers: [{ address: urlObj.hostname, port: parseInt(urlObj.port), users: urlObj.username ? [{ user: urlObj.username, pass: urlObj.password }] : [] }] };
+            outbound.settings = { servers: [{ address: urlObj.hostname, port, users: urlObj.username ? [{ user: urlObj.username, pass: urlObj.password }] : [] }] };
+            if (urlObj.protocol === 'https:') {
+                outbound.streamSettings = {
+                    network: 'tcp',
+                    security: 'tls',
+                    tlsSettings: { serverName: urlObj.hostname, fingerprint: "chrome", allowInsecure: true },
+                };
+            }
         } else { throw new Error("Unsupported protocol"); }
     } catch (e) { console.error("Parse Proxy Error:", link, e); throw e; }
     return outbound;

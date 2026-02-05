@@ -2341,7 +2341,7 @@ async function testCurrentGroup() {
         if (btn) btn.innerText = "...";
     });
 
-    const promises = list.map(async (p) => {
+    const runOne = async (p) => {
         try {
             const res = await window.electronAPI.invoke('test-proxy-node', p.url);
             p.latency = res && res.ok ? (res.connectivity && typeof res.connectivity.latencyMs === 'number' ? res.connectivity.latencyMs : p.latency) : -1;
@@ -2351,7 +2351,6 @@ async function testCurrentGroup() {
             p.lastTestMsg = res && (res.error || (res.connectivity && res.connectivity.error)) ? String(res.error || res.connectivity.error) : '';
             p.ipInfo = res && res.geo ? res.geo : (res && res.ip ? { ip: res.ip } : null);
             p.lastIpAt = (res && (res.geo || res.ip)) ? Date.now() : (p.lastIpAt || 0);
-            return p;
         } catch (e) {
             p.latency = -1;
             p.lastTestAt = Date.now();
@@ -2359,10 +2358,19 @@ async function testCurrentGroup() {
             const err = formatIpcError(e);
             p.lastTestCode = err.code ? String(err.code) : '';
             p.lastTestMsg = err.message;
-            return p;
+        }
+    };
+
+    // Batch testing can spawn many proxy engine processes. Limit concurrency to avoid port races/timeouts.
+    const concurrency = Math.max(1, Math.min(4, (list.length || 1)));
+    let cursor = 0;
+    const workers = new Array(concurrency).fill(0).map(async () => {
+        while (cursor < list.length) {
+            const p = list[cursor++];
+            await runOne(p);
         }
     });
-    await Promise.all(promises);
+    await Promise.all(workers);
     await window.electronAPI.saveSettings(globalSettings);
     if (globalSettings.mode === 'single') {
         let best = null, min = 99999;

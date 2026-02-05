@@ -130,10 +130,30 @@ function extractLinksFromText(text) {
   const lines = String(text || '').split(/[\r\n]+/);
   const nodes = [];
   let skipped = 0;
+  const allowedSchemes = new Set([
+    'vmess',
+    'vless',
+    'trojan',
+    'ss',
+    'socks',
+    'socks5',
+    'http',
+    'https',
+    'hysteria',
+    'hysteria2',
+    'hy2',
+    'tuic',
+    'sb',
+  ]);
   for (const rawLine of lines) {
     const line = safeTrim(rawLine);
     if (!line) continue;
     if (!line.includes('://')) {
+      skipped++;
+      continue;
+    }
+    const scheme = line.split('://')[0].toLowerCase();
+    if (!allowedSchemes.has(scheme)) {
       skipped++;
       continue;
     }
