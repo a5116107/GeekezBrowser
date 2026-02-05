@@ -25,7 +25,7 @@ async function main() {
 
   console.log('[regression] sing-box config generation + sing-box check');
   const { normalizeProxySpec } = require('../proxy/proxySpec');
-  const { buildSingboxConfigFromProxySpec } = require('../proxy/singboxConfig');
+  const { buildSingboxConfigFromProxySpec, buildSingboxTunConfigFromProxySpec } = require('../proxy/singboxConfig');
 
   const encodeBase64Url = (input) =>
     Buffer.from(String(input || ''), 'utf8')
@@ -141,6 +141,14 @@ async function main() {
     const chainedPath = path.join(logsDir, 'sb_reg_preproxy.json');
     await fs.writeJson(chainedPath, chained, { spaces: 2 });
     await checkConfig(chainedPath);
+
+    // TUN config should also be accepted by `sing-box check` (schema validation only).
+    const tunCfg = buildSingboxTunConfigFromProxySpec(normalizeProxySpec(samples[0]), 22000, {
+      tun: { interfaceName: 'geekez-tun', mtu: 1500, auto_route: true, strict_route: true, dns_hijack: true },
+    });
+    const tunPath = path.join(logsDir, 'sb_reg_tun.json');
+    await fs.writeJson(tunPath, tunCfg, { spaces: 2 });
+    await checkConfig(tunPath);
     console.log('[ok] sing-box configs validated via `sing-box check`');
   } else {
     console.log('[skip] sing-box.exe not present; skipped config check');

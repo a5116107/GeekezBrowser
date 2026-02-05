@@ -3,6 +3,9 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; require-trusted-types-for 'script'">
+    <meta name="referrer" content="no-referrer">
     <title>GeekEZ Browser</title>
     <style>
         :root {
@@ -1106,6 +1109,30 @@
                     <option value="xray" selected>Xray (Recommended)</option>
                     <option value="sing-box">sing-box</option>
                 </select>
+                <label data-i18n="proxyModeLabel" style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Mode</label>
+                <select id="addProxyMode" class="quick-switch-select no-drag" style="width:100%; margin-bottom:8px;">
+                    <option value="app_proxy" selected data-i18n="proxyModeApp">App Proxy (SOCKS)</option>
+                    <option value="tun" data-i18n="proxyModeTun">TUN (Windows / Admin)</option>
+                </select>
+                <div id="addTunOptions" style="display:none; border:1px solid var(--border); border-radius:10px; padding:10px; background:var(--card-bg); margin-bottom:10px;">
+                    <div style="font-size:11px; font-weight:600; margin-bottom:8px;" data-i18n="tunOptionsTitle">TUN Options</div>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                            <input type="checkbox" id="addTunAutoRoute" checked> <span data-i18n="tunAutoRoute">Auto Route</span>
+                        </label>
+                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                            <input type="checkbox" id="addTunStrictRoute" checked> <span data-i18n="tunStrictRoute">Strict Route</span>
+                        </label>
+                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                            <input type="checkbox" id="addTunDnsHijack" checked> <span data-i18n="tunDnsHijack">DNS Hijack</span>
+                        </label>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <label style="font-size:12px; opacity:0.85; min-width:70px;" data-i18n="tunMtu">MTU</label>
+                        <input type="number" id="addTunMtu" placeholder="1500" style="flex:1; margin-bottom:0;">
+                    </div>
+                    <div style="font-size:10px; opacity:0.6; margin-top:8px;" data-i18n="tunHint">Requires Administrator. Only one profile can run in TUN mode.</div>
+                </div>
                 <textarea id="addProxy" rows="4" placeholder="vmess://, ss://... (one per line for batch)"
                     spellcheck="false" autocomplete="off"></textarea>
                 <div style="font-size:10px; opacity:0.5; margin-bottom:8px;" data-i18n="batchHint">Multiple links =
@@ -1189,6 +1216,30 @@
                     <option value="sing-box">sing-box</option>
                 </select>
                 <div style="font-size:10px; opacity:0.55; margin-bottom:8px;">Changing engine requires restarting the profile.</div>
+                <label data-i18n="proxyModeLabel" style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Mode</label>
+                <select id="editProxyMode" class="quick-switch-select no-drag" style="width:100%; margin-bottom:8px;">
+                    <option value="app_proxy" selected data-i18n="proxyModeApp">App Proxy (SOCKS)</option>
+                    <option value="tun" data-i18n="proxyModeTun">TUN (Windows / Admin)</option>
+                </select>
+                <div id="editTunOptions" style="display:none; border:1px solid var(--border); border-radius:10px; padding:10px; background:var(--card-bg); margin-bottom:10px;">
+                    <div style="font-size:11px; font-weight:600; margin-bottom:8px;" data-i18n="tunOptionsTitle">TUN Options</div>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                            <input type="checkbox" id="editTunAutoRoute" checked> <span data-i18n="tunAutoRoute">Auto Route</span>
+                        </label>
+                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                            <input type="checkbox" id="editTunStrictRoute" checked> <span data-i18n="tunStrictRoute">Strict Route</span>
+                        </label>
+                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                            <input type="checkbox" id="editTunDnsHijack" checked> <span data-i18n="tunDnsHijack">DNS Hijack</span>
+                        </label>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <label style="font-size:12px; opacity:0.85; min-width:70px;" data-i18n="tunMtu">MTU</label>
+                        <input type="number" id="editTunMtu" placeholder="1500" style="flex:1; margin-bottom:0;">
+                    </div>
+                    <div style="font-size:10px; opacity:0.6; margin-top:8px;" data-i18n="tunHint">Requires Administrator. Only one profile can run in TUN mode.</div>
+                </div>
                 <textarea id="editProxy" rows="4"></textarea>
 
                 <label data-i18n="proxyConsistencyMode"

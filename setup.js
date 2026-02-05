@@ -2,8 +2,16 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const os = require('os');
-const { exec } = require('child_process');
 const readline = require('readline'); // 引入 readline 用于控制光标
+const {
+    extractZip,
+    isZipFileHeader,
+    sha256FileHex,
+    validateUpdateDownloadUrl,
+    UPDATE_MAX_DOWNLOAD_BYTES,
+    UPDATE_DOWNLOAD_TIMEOUT_MS,
+    UPDATE_MAX_REDIRECTS,
+} = require('./updateUtils');
 
 // 配置
 const RESOURCES_BIN = path.join(__dirname, 'resources', 'bin');
@@ -54,12 +62,14 @@ function getPlatformInfo() {
     let exeName = 'xray';
 
     if (platform === 'win32') {
-        xrayAsset = `Xray-windows-${arch === 'x64' ? '64' : '32'}.zip`;
+        if (arch === 'arm64') xrayAsset = 'Xray-windows-arm64-v8a.zip';
+        else xrayAsset = `Xray-windows-${arch === 'x64' ? '64' : '32'}.zip`;
         exeName = 'xray.exe';
     } else if (platform === 'darwin') {
         xrayAsset = `Xray-macos-${arch === 'arm64' ? 'arm64-v8a' : '64'}.zip`;
     } else if (platform === 'linux') {
-        xrayAsset = `Xray-linux-${arch === 'x64' ? '64' : '32'}.zip`;
+        if (arch === 'arm64') xrayAsset = 'Xray-linux-arm64-v8a.zip';
+        else xrayAsset = `Xray-linux-${arch === 'x64' ? '64' : '32'}.zip`;
     } else {
         console.error('❌ Unsupported Platform:', platform);
         process.exit(1);
@@ -126,65 +136,110 @@ function getLatestXrayVersion(useProxy = false) {
 }
 
 // 支持进度显示的下载函数
-function downloadFile(url, dest, label = 'Downloading') {
-    return new Promise((resolve, reject) => {
-        const req = https.get(url, (response) => {
-            // 处理重定向
-            if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-                downloadFile(response.headers.location, dest, label).then(resolve).catch(reject);
+function downloadFile(url, dest, label = 'Downloading', options = {}) {
+    const maxRedirects = Number.isInteger(options.maxRedirects) ? options.maxRedirects : UPDATE_MAX_REDIRECTS;
+    const maxBytes = Number.isFinite(options.maxBytes) ? options.maxBytes : UPDATE_MAX_DOWNLOAD_BYTES;
+    const timeoutMs = Number.isInteger(options.timeoutMs) ? options.timeoutMs : UPDATE_DOWNLOAD_TIMEOUT_MS;
+
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const tmpPath = `${dest}.${Date.now()}.tmp`;
+
+    const doRequest = (currentUrl, redirectsLeft) =>
+        new Promise((resolve, reject) => {
+            let resolvedUrl;
+            try {
+                resolvedUrl = validateUpdateDownloadUrl(currentUrl);
+            } catch (e) {
+                reject(e);
                 return;
             }
 
-            if (response.statusCode !== 200) {
-                reject(new Error(`Failed to download: HTTP ${response.statusCode}`));
-                return;
-            }
+            const headers = { 'User-Agent': 'GeekEZ-Browser-Setup' };
+            let file = null;
+            let timer = null;
+            let finished = false;
 
-            const file = fs.createWriteStream(dest);
-            const totalBytes = parseInt(response.headers['content-length'], 10) || 0;
-            let receivedBytes = 0;
-            const startTime = Date.now();
+            const cleanup = (err) => {
+                if (finished) return;
+                finished = true;
+                try { if (timer) clearTimeout(timer); } catch (e) { }
+                try { if (file) file.close(() => { }); } catch (e) { }
+                try { fs.unlinkSync(tmpPath); } catch (e) { }
+                try { process.stdout.write('\n'); } catch (e) { }
+                reject(err);
+            };
 
-            response.on('data', (chunk) => {
-                receivedBytes += chunk.length;
-                showProgress(receivedBytes, totalBytes, startTime, label);
-            });
+            const req = https.get(resolvedUrl, { headers }, (response) => {
+                if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                    if (redirectsLeft <= 0) {
+                        response.resume();
+                        cleanup(new Error('Too many redirects'));
+                        return;
+                    }
+                    const nextUrl = new URL(response.headers.location, resolvedUrl).toString();
+                    finished = true; // chained request will settle the promise
+                    response.resume();
+                    doRequest(nextUrl, redirectsLeft - 1).then(resolve).catch(reject);
+                    return;
+                }
 
-            response.pipe(file);
+                if (response.statusCode !== 200) {
+                    response.resume();
+                    cleanup(new Error(`Failed to download: HTTP ${response.statusCode}`));
+                    return;
+                }
 
-            file.on('finish', () => {
-                file.close(() => {
-                    process.stdout.write('\n'); // 下载完成换行
+                const totalBytes = parseInt(response.headers['content-length'], 10) || 0;
+                if (totalBytes > 0 && totalBytes > maxBytes) {
+                    response.resume();
+                    cleanup(new Error(`Download too large (>${maxBytes} bytes)`));
+                    return;
+                }
+
+                file = fs.createWriteStream(tmpPath);
+                const startTime = Date.now();
+                let receivedBytes = 0;
+
+                timer = setTimeout(() => {
+                    try { req.destroy(new Error('Download timeout')); } catch (e) { }
+                }, timeoutMs);
+
+                response.on('data', (chunk) => {
+                    receivedBytes += chunk.length;
+                    showProgress(receivedBytes, totalBytes, startTime, label);
+                    if (receivedBytes > maxBytes) {
+                        cleanup(new Error(`Download too large (>${maxBytes} bytes)`));
+                        try { req.destroy(); } catch (e) { }
+                        try { response.destroy(); } catch (e) { }
+                    }
+                });
+
+                response.on('error', cleanup);
+                file.on('error', cleanup);
+
+                file.on('finish', () => {
+                    try { if (timer) clearTimeout(timer); } catch (e) { }
+                    try { file.close(() => { }); } catch (e) { }
+                    try { if (fs.existsSync(dest)) fs.unlinkSync(dest); } catch (e) { }
+                    try { fs.renameSync(tmpPath, dest); } catch (e) { cleanup(e); return; }
+                    try { process.stdout.write('\n'); } catch (e) { }
+                    finished = true;
                     resolve();
                 });
+
+                response.pipe(file);
             });
 
-            file.on('error', (err) => {
-                fs.unlink(dest, () => { });
-                reject(err);
-            });
+            req.on('error', cleanup);
         });
 
-        req.on('error', (err) => {
-            fs.unlink(dest, () => { });
-            reject(err);
-        });
-    });
+    return doRequest(url, maxRedirects);
 }
 
-function extractZip(zipPath, destDir) {
-    return new Promise((resolve, reject) => {
-        console.log('📦 Extracting...');
-        if (os.platform() === 'win32') {
-            exec(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, (err) => {
-                if (err) reject(err); else resolve();
-            });
-        } else {
-            exec(`unzip -o "${zipPath}" -d "${destDir}"`, (err) => {
-                if (err) reject(err); else resolve();
-            });
-        }
-    });
+function parseSha256FromDgstText(text) {
+    if (typeof text !== 'string') return null;
+    const m = text.match(/SHA2-256=\s*([a-f0-9]{64})/i);
+    return m ? m[1].toLowerCase() : null;
 }
 
 async function main() {
@@ -217,8 +272,26 @@ async function main() {
         // 这里的 Label 用于进度条前缀
         await downloadFile(downloadUrl, zipPath, 'Xray Core');
 
+        if (!fs.existsSync(zipPath)) throw new Error('Download failed: file not found');
+        const zipStat = fs.statSync(zipPath);
+        if (zipStat.size <= 0) throw new Error('Download failed: empty file');
+        if (!isZipFileHeader(zipPath)) throw new Error('Downloaded file is not a zip');
+        const zipSha = sha256FileHex(zipPath);
+        if (!zipSha || zipSha.length !== 64) throw new Error('Failed to compute zip sha256');
+
+        // Verify upstream sha256 digest (required)
+        const dgstPath = path.join(BIN_DIR, 'xray.zip.dgst');
+        const dgstUrl = `${downloadUrl}.dgst`;
+        await downloadFile(dgstUrl, dgstPath, 'Xray Digest', { maxBytes: 1024 * 1024 });
+        const dgstText = fs.readFileSync(dgstPath, 'utf8');
+        const expectedSha = parseSha256FromDgstText(dgstText);
+        if (!expectedSha) throw new Error('Failed to parse upstream zip sha256 digest');
+        if (zipSha.toLowerCase() !== expectedSha) throw new Error('Downloaded zip sha256 mismatch');
+
+        console.log('📦 Extracting...');
         await extractZip(zipPath, BIN_DIR);
-        fs.unlinkSync(zipPath);
+        try { fs.unlinkSync(zipPath); } catch (e) { }
+        try { fs.unlinkSync(dgstPath); } catch (e) { }
 
         // Move shared resources (geoip.dat, geosite.dat) to common bin directory for asset loading
         const sharedFiles = ['geoip.dat', 'geosite.dat', 'LICENSE', 'README.md'];
@@ -235,7 +308,7 @@ async function main() {
             }
         });
 
-        if (os.platform() !== 'win32') fs.chmodSync(path.join(BIN_DIR, exeName), '755');
+        if (os.platform() !== 'win32') fs.chmodSync(path.join(BIN_DIR, exeName), 0o755);
         console.log(`✅ Xray Updated Successfully! (Platform: ${PLATFORM_ARCH})`);
 
         // 2. 准备 Chrome

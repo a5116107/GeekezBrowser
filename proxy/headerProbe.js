@@ -1,5 +1,6 @@
 const https = require('https');
 const { SocksProxyAgent } = require('socks-proxy-agent');
+const { normalizeProxyInputRaw } = require('./proxySpec');
 
 function fetchJson(url, timeoutMs, agent) {
   return new Promise((resolve, reject) => {
@@ -27,7 +28,8 @@ function fetchJson(url, timeoutMs, agent) {
 
 function agentFromProxyStr(proxyStr) {
   if (!proxyStr) return null;
-  const s = String(proxyStr);
+  const s = normalizeProxyInputRaw(proxyStr);
+  if (!s) return null;
   if (s.startsWith('socks5://') || s.startsWith('socks://')) return new SocksProxyAgent(s.replace('socks://', 'socks5://'));
   if (s.startsWith('http://') || s.startsWith('https://')) return undefined; // not supported here
   return null;

@@ -137,13 +137,19 @@ function extractLinksFromText(text) {
     'ss',
     'socks',
     'socks5',
+    'socks5h',
     'http',
     'https',
     'hysteria',
+    'hy',
     'hysteria2',
     'hy2',
     'tuic',
     'sb',
+    'shadowtls',
+    'shadow-tls',
+    'wireguard',
+    'wg',
   ]);
   for (const rawLine of lines) {
     const line = safeTrim(rawLine);

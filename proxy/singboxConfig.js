@@ -654,4 +654,80 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort, options = {}) {
   return config;
 }
 
-module.exports = { buildSingboxConfigFromProxySpec };
+function buildSingboxTunConfigFromProxySpec(spec, localSocksPort, options = {}) {
+  const base = buildSingboxConfigFromProxySpec(spec, localSocksPort, options);
+  const opts = options && typeof options === 'object' ? options : {};
+  const tun = opts.tun && typeof opts.tun === 'object' ? opts.tun : {};
+
+  const interfaceName = isNonEmptyString(tun.interfaceName) ? String(tun.interfaceName) : 'geekez-tun';
+  const address = Array.isArray(tun.address) && tun.address.length > 0 ? tun.address : ['172.19.0.1/30'];
+  const mtu = Number.isFinite(Number(tun.mtu)) ? Number(tun.mtu) : 1500;
+  const autoRoute = tun.auto_route === false ? false : true;
+  const strictRoute = tun.strict_route === false ? false : true;
+  const stack = isNonEmptyString(tun.stack) ? String(tun.stack) : undefined;
+  const dnsHijack = tun.dns_hijack === false ? false : true;
+
+  base.inbounds = Array.isArray(base.inbounds) ? base.inbounds : [];
+  base.inbounds.unshift({
+    type: 'tun',
+    tag: 'in-tun',
+    interface_name: interfaceName,
+    address,
+    mtu,
+    auto_route: autoRoute,
+    strict_route: strictRoute,
+    stack,
+    sniff: true,
+  });
+
+  base.outbounds = Array.isArray(base.outbounds) ? base.outbounds : [];
+  const hasDirect = base.outbounds.some((o) => o && typeof o === 'object' && String(o.type || '').toLowerCase() === 'direct');
+  if (!hasDirect) {
+    base.outbounds.push({ type: 'direct', tag: 'direct' });
+  }
+
+  base.route = base.route && typeof base.route === 'object' ? base.route : { rules: [], final: 'proxy' };
+  if (base.route.auto_detect_interface === undefined) base.route.auto_detect_interface = true;
+  const mainOutboundTag = isNonEmptyString(base.route.final) ? String(base.route.final) : 'proxy';
+
+  const existingRules = Array.isArray(base.route.rules) ? base.route.rules : [];
+  const tunRules = [];
+
+  if (dnsHijack) {
+    base.dns = base.dns && typeof base.dns === 'object' ? base.dns : { servers: [], final: 'dns-proxy' };
+    if (!Array.isArray(base.dns.servers)) base.dns.servers = [];
+    if (!base.dns.servers.some((s) => s && typeof s === 'object' && String(s.tag || '') === 'dns-proxy')) {
+      base.dns.servers.unshift({
+        tag: 'dns-proxy',
+        address: 'https://1.1.1.1/dns-query',
+        detour: mainOutboundTag,
+      });
+    }
+    if (!base.dns.final) base.dns.final = 'dns-proxy';
+
+    tunRules.push({
+      inbound: ['in-tun'],
+      port: [53],
+      network: ['udp', 'tcp'],
+      action: 'hijack-dns',
+    });
+  }
+
+  // Keep private IP traffic local by default (e.g. LAN resources).
+  tunRules.push({
+    inbound: ['in-tun'],
+    ip_is_private: true,
+    outbound: 'direct',
+  });
+
+  // Default: route tun traffic to the main outbound.
+  tunRules.push({
+    inbound: ['in-tun'],
+    outbound: mainOutboundTag,
+  });
+
+  base.route.rules = [...tunRules, ...existingRules];
+  return base;
+}
+
+module.exports = { buildSingboxConfigFromProxySpec, buildSingboxTunConfigFromProxySpec };

@@ -9,6 +9,10 @@ function decodeBase64Content(str) {
     } catch (e) { return str; }
 }
 
+function safeDecodeUrlComponent(value) {
+    try { return decodeURIComponent(String(value || '')); } catch (e) { return String(value || ''); }
+}
+
 function getProxyRemark(link) {
     if (!link) return '';
     link = link.trim();
@@ -89,7 +93,7 @@ function parseProxyLink(link, tag) {
                     address: urlObj.hostname,
                     port: port,
                     users: [{
-                        id: urlObj.username,
+                        id: safeDecodeUrlComponent(urlObj.username),
                         encryption: params.get("encryption") || "none",
                         flow: params.get("flow") || ""
                     }]
@@ -140,7 +144,7 @@ function parseProxyLink(link, tag) {
             const port = (urlObj.port && Number.isFinite(parseInt(urlObj.port))) ? parseInt(urlObj.port) : 443;
 
             outbound.protocol = "trojan";
-            outbound.settings = { servers: [{ address: urlObj.hostname, port: port, password: urlObj.username }] };
+            outbound.settings = { servers: [{ address: urlObj.hostname, port: port, password: safeDecodeUrlComponent(urlObj.username) }] };
             outbound.streamSettings = {
                 network: type,
                 security: params.get("security") || "tls",
@@ -228,64 +232,44 @@ function parseProxyLink(link, tag) {
                 concurrency: -1
             };
         } else if (lower.startsWith('socks')) {
-            // Support two SOCKS5 formats:
-            // 1. v2rayN format: socks://base64(user:pass)@host:port#remark
-            // 2. Standard format: socks://user:pass@host:port
-
             outbound.protocol = "socks";
 
-            // Remove socks:// or socks5://
-            let cleanLink = link.replace(/^socks5?:\/\//i, '');
-
-            // Extract remark if exists (after #)
-            const hashIndex = cleanLink.indexOf('#');
-            if (hashIndex !== -1) {
-                cleanLink = cleanLink.substring(0, hashIndex);
+            // Support:
+            // 1) Standard: socks5://user:pass@host:port
+            // 2) v2rayN:  socks://BASE64(user:pass)@host:port#remark
+            // 3) No auth: socks5://host:port
+            let urlObj;
+            try {
+                // `normalizeProxyInputRaw` should ensure a canonical URL; still guard URL parsing here.
+                urlObj = new URL(link);
+            } catch (e) {
+                // Fallback: try normalizing again (handles curl-like snippets, weird auth order, etc.)
+                const maybe = normalizeProxyInputRaw(link);
+                const candidate = maybe && String(maybe).includes('://') ? maybe : `socks5://${String(maybe || '').trim()}`;
+                urlObj = new URL(candidate);
             }
 
-            // Split by @ to get auth and server parts
-            const atIndex = cleanLink.indexOf('@');
-            let username = '';
-            let password = '';
-            let serverPart = cleanLink;
+            const address = urlObj.hostname;
+            const port = (urlObj.port && Number.isFinite(parseInt(urlObj.port))) ? parseInt(urlObj.port) : 1080;
 
-            if (atIndex !== -1) {
-                const authPart = cleanLink.substring(0, atIndex);
-                serverPart = cleanLink.substring(atIndex + 1);
+            let username = safeDecodeUrlComponent(urlObj.username);
+            let password = safeDecodeUrlComponent(urlObj.password);
 
-                // Try to decode as base64 first (v2rayN style)
-                try {
-                    const decoded = Buffer.from(authPart, 'base64').toString('utf8');
-                    const colonIndex = decoded.indexOf(':');
-                    if (colonIndex !== -1) {
-                        username = decoded.substring(0, colonIndex);
-                        password = decoded.substring(colonIndex + 1);
-                    } else {
-                        // Not a valid user:pass format after decode, treat as plain username
-                        username = authPart;
-                    }
-                } catch (e) {
-                    // Not base64, check if it's user:pass format
-                    const colonIndex = authPart.indexOf(':');
-                    if (colonIndex !== -1) {
-                        username = authPart.substring(0, colonIndex);
-                        password = authPart.substring(colonIndex + 1);
-                    } else {
-                        username = authPart;
-                    }
+            // v2rayN style: socks://BASE64(user:pass)@host:port
+            if (username && !password) {
+                const decoded = decodeBase64Content(username);
+                const idx = decoded.indexOf(':');
+                if (idx !== -1) {
+                    username = decoded.substring(0, idx);
+                    password = decoded.substring(idx + 1);
                 }
             }
 
-            // Parse server part (host:port)
-            const colonIndex = serverPart.lastIndexOf(':');
-            const address = colonIndex !== -1 ? serverPart.substring(0, colonIndex) : serverPart;
-            const port = colonIndex !== -1 ? parseInt(serverPart.substring(colonIndex + 1)) : 1080;
-
             outbound.settings = {
                 servers: [{
-                    address: address,
-                    port: port,
-                    users: username ? [{ user: username, pass: password }] : []
+                    address,
+                    port,
+                    users: username ? [{ user: username, pass: password || '' }] : []
                 }]
             };
         } else if (link.includes(':') && !link.includes('://')) {
@@ -313,11 +297,17 @@ function parseProxyLink(link, tag) {
             } else {
                 throw new Error("Invalid IP:Port:User:Pass format");
             }
-        } else if (lower.startsWith('http')) {
+        } else if (lower.startsWith('http://') || lower.startsWith('https://')) {
             const urlObj = new URL(link);
             const port = (urlObj.port && Number.isFinite(parseInt(urlObj.port))) ? parseInt(urlObj.port) : (urlObj.protocol === 'https:' ? 443 : 80);
             outbound.protocol = "http";
-            outbound.settings = { servers: [{ address: urlObj.hostname, port, users: urlObj.username ? [{ user: urlObj.username, pass: urlObj.password }] : [] }] };
+            outbound.settings = {
+                servers: [{
+                    address: urlObj.hostname,
+                    port,
+                    users: urlObj.username ? [{ user: safeDecodeUrlComponent(urlObj.username), pass: safeDecodeUrlComponent(urlObj.password) }] : []
+                }]
+            };
             if (urlObj.protocol === 'https:') {
                 outbound.streamSettings = {
                     network: 'tcp',

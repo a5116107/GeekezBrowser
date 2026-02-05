@@ -17,6 +17,8 @@ async function main() {
   await run('node', ['scripts/regression_ipc.js']);
   console.log('[regression:all] subscription-parser');
   await run('node', ['scripts/e2e_subscription_parser.js']);
+  console.log('[regression:all] proxy-parser');
+  await run('node', ['scripts/regression_proxy_parser.js']);
   console.log('[regression:all] updater-security');
   await run('node', ['scripts/regression_updater_security.js']);
   console.log('[regression:all] i18n');

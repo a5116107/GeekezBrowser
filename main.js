@@ -1,7 +1,8 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, screen, shell } = require('electron');
 const path = require('path');
+const { session } = require('electron');
 const fs = require('fs-extra');
-const { spawn, exec } = require('child_process');
+const { spawn } = require('child_process');
 const getPort = require('get-port');
 const puppeteer = require('puppeteer'); // 使用原生 puppeteer，不带 extra
 const { v4: uuidv4 } = require('uuid');
@@ -23,7 +24,7 @@ const gunzip = promisify(zlib.gunzip);
 const { generateXrayConfig } = require('./utils');
 const { generateFingerprint, normalizeFingerprintSpec, getInjectScript } = require('./fingerprint');
 const { normalizeProxySpec, normalizeProxyInputRaw } = require('./proxy/proxySpec');
-const { buildSingboxConfigFromProxySpec } = require('./proxy/singboxConfig');
+const { buildSingboxConfigFromProxySpec, buildSingboxTunConfigFromProxySpec } = require('./proxy/singboxConfig');
 const { downloadFile, extractZip, isZipFileHeader, sha256FileHex } = require('./updateUtils');
 
 const isDev = !app.isPackaged;
@@ -65,6 +66,26 @@ const SETTINGS_FILE = path.join(DATA_PATH, 'settings.json');
 fs.ensureDirSync(DATA_PATH);
 fs.ensureDirSync(TRASH_PATH);
 
+const PROFILE_ID_SAFE_RE = /^[a-zA-Z0-9_-]{1,80}$/;
+
+function normalizeProfileId(input) {
+    if (typeof input !== 'string') return null;
+    const id = input.trim();
+    if (!id) return null;
+    if (!PROFILE_ID_SAFE_RE.test(id)) return null;
+    return id;
+}
+
+function resolveProfileDirOrThrow(profileId) {
+    const id = normalizeProfileId(profileId);
+    if (!id) throw new Error('Invalid profile id');
+    const dataRoot = path.resolve(DATA_PATH);
+    const dir = path.resolve(DATA_PATH, id);
+    const prefix = dataRoot.endsWith(path.sep) ? dataRoot : dataRoot + path.sep;
+    if (!dir.startsWith(prefix)) throw new Error('Invalid profile path');
+    return { id, profileDir: dir };
+}
+
 let activeProcesses = {};
 let apiServer = null;
 let apiServerRunning = false;
@@ -88,12 +109,57 @@ function singboxEnvForConfig(sbConfig) {
     return env;
 }
 
+function isWindowsAdmin() {
+    if (process.platform !== 'win32') return false;
+    try {
+        const { spawnSync } = require('child_process');
+        const res = spawnSync('net', ['session'], { windowsHide: true, stdio: 'ignore' });
+        return res && res.status === 0;
+    } catch (e) {
+        return false;
+    }
+}
+
+function assertTunReadyOrThrow(requestingProfileId) {
+    if (process.platform !== 'win32') {
+        const err = new Error('TUN mode is currently supported on Windows only');
+        err.code = 'TUN_UNSUPPORTED_PLATFORM';
+        throw err;
+    }
+    const wintunPath = path.join(BIN_DIR, 'wintun.dll');
+    if (!fs.existsSync(SINGBOX_PATH) || !fs.existsSync(wintunPath)) {
+        const err = new Error('TUN resources missing (sing-box.exe and/or wintun.dll)');
+        err.code = 'TUN_RESOURCES_MISSING';
+        throw err;
+    }
+    if (!isWindowsAdmin()) {
+        const err = new Error('TUN mode requires running GeekEZ Browser as Administrator');
+        err.code = 'TUN_ADMIN_REQUIRED';
+        throw err;
+    }
+    const runningIds = Object.keys(activeProcesses || {});
+    if (runningIds.length > 0) {
+        const other = runningIds.find((id) => id !== requestingProfileId);
+        if (other) {
+            const err = new Error('Stop other running profiles before enabling TUN mode');
+            err.code = 'TUN_REQUIRES_SINGLE_PROFILE';
+            throw err;
+        }
+    }
+}
+
 async function startProxyEngine(profile, localPort, configPath, logFd, options = {}) {
-    const engine = getProxyEngineFromProfile(profile);
+    const proxyMode = profile && profile.proxyMode === 'tun' ? 'tun' : 'app_proxy';
+    let engine = getProxyEngineFromProfile(profile);
     const proxyStr = profile.proxyStr || '';
     const preProxyConfig = (options && typeof options === 'object' && options.preProxyConfig)
         ? options.preProxyConfig
         : ((profile && profile.preProxyConfig) ? profile.preProxyConfig : null);
+
+    if (proxyMode === 'tun') {
+        engine = 'sing-box';
+        assertTunReadyOrThrow(profile && profile.id ? profile.id : null);
+    }
 
     if (engine === 'xray') {
         const config = generateXrayConfig(proxyStr, localPort, preProxyConfig);
@@ -114,7 +180,10 @@ async function startProxyEngine(profile, localPort, configPath, logFd, options =
             const target = preProxyConfig && Array.isArray(preProxyConfig.preProxies) && preProxyConfig.preProxies.length > 0 ? preProxyConfig.preProxies[0] : null;
             if (target && target.url) preProxySpec = normalizeProxySpec(target.url);
         } catch (e) { }
-        const sbConfig = preProxySpec ? buildSingboxConfigFromProxySpec(spec, localPort, { preProxySpec }) : buildSingboxConfigFromProxySpec(spec, localPort);
+        const tunOpts = profile && profile.tun && typeof profile.tun === 'object' ? profile.tun : null;
+        const sbConfig = proxyMode === 'tun'
+            ? (preProxySpec ? buildSingboxTunConfigFromProxySpec(spec, localPort, { preProxySpec, tun: tunOpts || {} }) : buildSingboxTunConfigFromProxySpec(spec, localPort, { tun: tunOpts || {} }))
+            : (preProxySpec ? buildSingboxConfigFromProxySpec(spec, localPort, { preProxySpec }) : buildSingboxConfigFromProxySpec(spec, localPort));
         fs.writeJsonSync(configPath, sbConfig);
         const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: singboxEnvForConfig(sbConfig), stdio: ['ignore', logFd, logFd], windowsHide: true });
         return { engine: 'sing-box', pid: sbProcess.pid, process: sbProcess };
@@ -384,7 +453,9 @@ async function handleApiRequest(method, pathname, body, params) {
 
         // Collect browser data
         for (const profile of profiles) {
-            const profileDataDir = path.join(DATA_PATH, profile.id, 'browser_data');
+            const safeProfileId = normalizeProfileId(profile && profile.id);
+            if (!safeProfileId) continue;
+            const profileDataDir = path.join(DATA_PATH, safeProfileId, 'browser_data');
             if (fs.existsSync(profileDataDir)) {
                 const defaultDir = path.join(profileDataDir, 'Default');
                 if (fs.existsSync(defaultDir)) {
@@ -400,7 +471,7 @@ async function handleApiRequest(method, pathname, body, params) {
                         }
                     }
                     if (Object.keys(browserFiles).length > 0) {
-                        backupData.browserData[profile.id] = browserFiles;
+                        backupData.browserData[safeProfileId] = browserFiles;
                     }
                 }
             }
@@ -544,10 +615,20 @@ ipcMain.handle('get-api-status', () => {
 
 function forceKill(pid) {
     return new Promise((resolve) => {
-        if (!pid) return resolve();
+        if (pid === null || pid === undefined) return resolve();
         try {
-            if (process.platform === 'win32') exec(`taskkill /pid ${pid} /T /F`, () => resolve());
-            else { process.kill(pid, 'SIGKILL'); resolve(); }
+            const pidNum = Number(pid);
+            if (!Number.isInteger(pidNum) || pidNum <= 0) return resolve();
+
+            if (process.platform === 'win32') {
+                const p = spawn('taskkill', ['/pid', String(pidNum), '/T', '/F'], { windowsHide: true });
+                p.on('error', () => resolve());
+                p.on('close', () => resolve());
+                return;
+            }
+
+            process.kill(pidNum, 'SIGKILL');
+            resolve();
         } catch (e) { resolve(); }
     });
 }
@@ -599,15 +680,48 @@ function saveSettings(settings) {
 
 function createWindow() {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+    const { pathToFileURL } = require('url');
+    const indexFileUrl = pathToFileURL(path.join(__dirname, 'index.html')).toString();
+    const isAllowedAppUrl = (u) => {
+        if (typeof u !== 'string') return false;
+        if (u === indexFileUrl) return true;
+        return u.startsWith(indexFileUrl + '#') || u.startsWith(indexFileUrl + '?');
+    };
+
     const win = new BrowserWindow({
         width: Math.round(width * 0.5), height: Math.round(height * 0.601), minWidth: 900, minHeight: 600,
         title: "GeekEZ Browser", backgroundColor: '#1e1e2d',
         icon: path.join(__dirname, 'icon.png'),
         titleBarOverlay: { color: '#1e1e2d', symbolColor: '#ffffff', height: 35 },
         titleBarStyle: 'hidden',
-        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false }
+        webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, webviewTag: false }
     });
     win.setMenuBarVisibility(false);
+
+    // Prevent navigation/popup to untrusted origins (remote content would inherit our preload APIs).
+    win.webContents.on('will-navigate', (event, url) => {
+        if (isAllowedAppUrl(url)) return;
+        event.preventDefault();
+        try {
+            const u = parseHttpUrlOrThrow(url);
+            shell.openExternal(u.toString());
+        } catch (e) { }
+    });
+    win.webContents.on('will-redirect', (event, url) => {
+        if (isAllowedAppUrl(url)) return;
+        event.preventDefault();
+    });
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        try {
+            const u = parseHttpUrlOrThrow(url);
+            shell.openExternal(u.toString());
+        } catch (e) { }
+        return { action: 'deny' };
+    });
+    win.webContents.on('will-attach-webview', (event) => {
+        event.preventDefault();
+    });
+
     win.loadFile('index.html');
     mainWindow = win; // Store global reference for API
     return win;
@@ -670,6 +784,10 @@ async function generateExtension(profilePath, fingerprint, profileName, watermar
 }
 
 app.whenReady().then(async () => {
+    try {
+        // UI window should not need any runtime permissions; deny by default.
+        session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => callback(false));
+    } catch (e) { }
     createWindow();
     setTimeout(() => { fs.emptyDir(TRASH_PATH).catch(() => { }); }, 10000);
 });
@@ -684,15 +802,71 @@ function parseHttpUrlOrThrow(url) {
     }
     return u;
 }
+
+const FETCH_MAX_TEXT_BYTES = 10 * 1024 * 1024; // 10MB
+
+async function readResponseTextWithLimit(res, maxBytes) {
+    const len = res && res.headers && typeof res.headers.get === 'function' ? res.headers.get('content-length') : null;
+    if (len && Number(len) > maxBytes) {
+        throw new Error(`Response too large (>${maxBytes} bytes)`);
+    }
+
+    if (!res || !res.body) return '';
+
+    // undici/web streams
+    if (typeof res.body.getReader === 'function') {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let received = 0;
+        let text = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value.byteLength;
+            if (received > maxBytes) {
+                try { await reader.cancel(); } catch (e) { }
+                throw new Error(`Response too large (>${maxBytes} bytes)`);
+            }
+            text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+        return text;
+    }
+
+    // node streams (fallback)
+    if (typeof res.body[Symbol.asyncIterator] === 'function') {
+        const decoder = new TextDecoder('utf-8');
+        let received = 0;
+        let text = '';
+        for await (const chunk of res.body) {
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            received += buf.length;
+            if (received > maxBytes) throw new Error(`Response too large (>${maxBytes} bytes)`);
+            text += decoder.decode(buf, { stream: true });
+        }
+        text += decoder.decode();
+        return text;
+    }
+
+    const text = await res.text();
+    if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+        throw new Error(`Response too large (>${maxBytes} bytes)`);
+    }
+    return text;
+}
+
 ipcMain.handle('fetch-url', async (e, url) => {
     try {
         const u = parseHttpUrlOrThrow(url);
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), 20_000);
-        const res = await fetch(u.toString(), { signal: ac.signal });
-        clearTimeout(timer);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return await res.text();
+        try {
+            const res = await fetch(u.toString(), { signal: ac.signal });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return await readResponseTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
+        } finally {
+            clearTimeout(timer);
+        }
     } catch (e) {
         throw (e && e.message) ? e.message : String(e);
     }
@@ -705,16 +879,19 @@ ipcMain.handle('fetch-url-conditional', async (e, { url, etag, lastModified }) =
         if (lastModified) headers['If-Modified-Since'] = String(lastModified);
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), 20_000);
-        const res = await fetch(u.toString(), { headers, signal: ac.signal });
-        clearTimeout(timer);
-        if (res.status === 304) {
-            return { notModified: true };
+        try {
+            const res = await fetch(u.toString(), { headers, signal: ac.signal });
+            if (res.status === 304) {
+                return { notModified: true };
+            }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const text = await readResponseTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
+            const newEtag = res.headers.get('etag');
+            const newLastModified = res.headers.get('last-modified');
+            return { notModified: false, content: text, etag: newEtag, lastModified: newLastModified };
+        } finally {
+            clearTimeout(timer);
         }
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const text = await res.text();
-        const newEtag = res.headers.get('etag');
-        const newLastModified = res.headers.get('last-modified');
-        return { notModified: false, content: text, etag: newEtag, lastModified: newLastModified };
     } catch (err) {
         return { notModified: false, error: err && err.message ? err.message : String(err) };
     }
@@ -753,8 +930,18 @@ ipcMain.handle('test-proxy-node', async (e, proxyStr) => {
 function inferProxyTestEngine(proxyStr) {
     const s = String(proxyStr || '').trim().toLowerCase();
     if (s.startsWith('sb://')) return 'sing-box';
-    if (s.startsWith('hysteria://') || s.startsWith('hysteria2://') || s.startsWith('hy2://') || s.startsWith('tuic://')) return 'sing-box';
-    if (s.startsWith('ss://') && s.includes('?plugin=')) return 'sing-box';
+    if (
+        s.startsWith('hysteria://') ||
+        s.startsWith('hy://') ||
+        s.startsWith('hysteria2://') ||
+        s.startsWith('hy2://') ||
+        s.startsWith('tuic://') ||
+        s.startsWith('shadowtls://') ||
+        s.startsWith('shadow-tls://') ||
+        s.startsWith('wireguard://') ||
+        s.startsWith('wg://')
+    ) return 'sing-box';
+    if (s.startsWith('ss://') && /[?&]plugin=/i.test(s)) return 'sing-box';
     return 'xray';
 }
 
@@ -1061,7 +1248,13 @@ ipcMain.handle('download-xray-update', async (e, url) => {
         if (zipSha.toLowerCase() !== expectedSha) throw new Error('Downloaded zip sha256 mismatch');
 
         console.log('[Update] Downloaded zip sha256:', zipSha.slice(0, 16) + '…');
-        if (process.platform === 'win32') await new Promise((resolve) => exec('taskkill /F /IM xray.exe', () => resolve()));
+        if (process.platform === 'win32') await new Promise((resolve) => {
+            try {
+                const p = spawn('taskkill', ['/F', '/IM', 'xray.exe'], { windowsHide: true });
+                p.on('error', () => resolve());
+                p.on('close', () => resolve());
+            } catch (e) { resolve(); }
+        });
         activeProcesses = {};
         await new Promise(r => setTimeout(r, 3000));
         const extractDir = path.join(tempDir, 'extracted');
@@ -1174,8 +1367,10 @@ ipcMain.handle('get-running-ids', () => Object.keys(activeProcesses));
 
 ipcMain.handle('open-path', async (event, targetPath) => {
     try {
-        if (!targetPath) return { success: false, error: 'No path provided' };
-        const result = await shell.openPath(targetPath);
+        if (typeof targetPath !== 'string' || !targetPath.trim()) return { success: false, error: 'No path provided' };
+        const p = targetPath.trim();
+        if (!path.isAbsolute(p)) return { success: false, error: 'Path must be absolute' };
+        const result = await shell.openPath(p);
         if (result) return { success: false, error: result };
         return { success: true };
     } catch (e) {
@@ -1186,7 +1381,9 @@ ipcMain.handle('open-path', async (event, targetPath) => {
 ipcMain.handle('get-profile-log-path', async (event, id) => {
     try {
         if (!id) return null;
-        const profileDir = path.join(DATA_PATH, id);
+        const resolved = resolveProfileDirOrThrow(id);
+        id = resolved.id;
+        const profileDir = resolved.profileDir;
         const engine = activeProcesses[id] ? activeProcesses[id].proxyEngine : (await (async () => {
             try {
                 const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
@@ -1204,7 +1401,9 @@ ipcMain.handle('get-profile-log-path', async (event, id) => {
 ipcMain.handle('clear-profile-logs', async (event, id, clearHistory = false) => {
     try {
         if (!id) return { success: false, error: 'Missing id' };
-        const profileDir = path.join(DATA_PATH, id);
+        const resolved = resolveProfileDirOrThrow(id);
+        id = resolved.id;
+        const profileDir = resolved.profileDir;
         const xrayLog = path.join(profileDir, 'xray_run.log');
         const sbLog = path.join(profileDir, 'singbox_run.log');
         // Remove current logs
@@ -1231,7 +1430,9 @@ ipcMain.handle('clear-profile-logs', async (event, id, clearHistory = false) => 
 ipcMain.handle('get-profile-log-sizes', async (event, id) => {
     try {
         if (!id) return { success: false, error: 'Missing id' };
-        const profileDir = path.join(DATA_PATH, id);
+        const resolved = resolveProfileDirOrThrow(id);
+        id = resolved.id;
+        const profileDir = resolved.profileDir;
         const xrayLog = path.join(profileDir, 'xray_run.log');
         const sbLog = path.join(profileDir, 'singbox_run.log');
         const statIf = async (p) => {
@@ -1246,7 +1447,9 @@ ipcMain.handle('get-profile-log-sizes', async (event, id) => {
 ipcMain.handle('list-profile-rotated-logs', async (event, id) => {
     try {
         if (!id) return { success: false, error: 'Missing id', files: [] };
-        const profileDir = path.join(DATA_PATH, id);
+        const resolved = resolveProfileDirOrThrow(id);
+        id = resolved.id;
+        const profileDir = resolved.profileDir;
         if (!fs.existsSync(profileDir)) return { success: true, files: [] };
         const files = await fs.readdir(profileDir);
         const rotated = [];
@@ -1270,10 +1473,13 @@ ipcMain.handle('delete-profile-rotated-log', async (event, id, filename) => {
     try {
         if (!id) return { success: false, error: 'Missing id' };
         if (!filename) return { success: false, error: 'Missing filename' };
-        const profileDir = path.join(DATA_PATH, id);
+        const resolved = resolveProfileDirOrThrow(id);
+        id = resolved.id;
+        const profileDir = resolved.profileDir;
         if (!fs.existsSync(profileDir)) return { success: false, error: 'Profile dir not found' };
         // Only allow deleting rotated logs matching our pattern within the profile dir.
         if (!/^(xray_run|singbox_run)\..+\.log$/i.test(filename)) return { success: false, error: 'Invalid filename' };
+        if (path.basename(filename) !== filename) return { success: false, error: 'Invalid filename' };
         const full = path.join(profileDir, filename);
         // Prevent path traversal
         if (path.dirname(full) !== profileDir) return { success: false, error: 'Invalid path' };
@@ -1285,6 +1491,9 @@ ipcMain.handle('delete-profile-rotated-log', async (event, id, filename) => {
 });
 
 ipcMain.handle('run-leak-check', async (event, profileId) => {
+    const safeId = normalizeProfileId(profileId);
+    if (!safeId) return { success: false, error: 'Invalid profile id' };
+    profileId = safeId;
     const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) return { success: false, error: 'Profile not found' };
@@ -1307,6 +1516,7 @@ ipcMain.handle('run-leak-check', async (event, profileId) => {
         const leakLogsDir = isDev ? path.join(process.cwd(), 'logs') : path.join(DATA_PATH, 'logs');
         const result = await runLeakCheck(profile, {
             logsDir: leakLogsDir,
+            proxyMode: (proc && proc.proxyMode === 'tun') || (profile && profile.proxyMode === 'tun') ? 'tun' : 'app_proxy',
             probes: [
                 require('./leakcheck/probes/ip'),
                 require('./leakcheck/probes/headers'),
@@ -1336,7 +1546,23 @@ ipcMain.handle('run-leak-check', async (event, profileId) => {
     }
 });
 ipcMain.handle('get-profiles', async () => { if (!fs.existsSync(PROFILES_FILE)) return []; return fs.readJson(PROFILES_FILE); });
-ipcMain.handle('update-profile', async (event, updatedProfile) => { let profiles = await fs.readJson(PROFILES_FILE); const index = profiles.findIndex(p => p.id === updatedProfile.id); if (index > -1) { profiles[index] = updatedProfile; await fs.writeJson(PROFILES_FILE, profiles); return true; } return false; });
+ipcMain.handle('update-profile', async (event, updatedProfile) => {
+    try {
+        if (!updatedProfile || typeof updatedProfile !== 'object') return false;
+        const safeId = normalizeProfileId(updatedProfile.id);
+        if (!safeId) return false;
+        const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+        const index = profiles.findIndex(p => p.id === safeId);
+        if (index > -1) {
+            profiles[index] = { ...updatedProfile, id: safeId };
+            await fs.writeJson(PROFILES_FILE, profiles);
+            return true;
+        }
+        return false;
+    } catch (e) {
+        return false;
+    }
+});
 ipcMain.handle('save-profile', async (event, data) => {
     const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
     const fingerprint = data.fingerprint || generateFingerprint();
@@ -1352,11 +1578,17 @@ ipcMain.handle('save-profile', async (event, data) => {
     // Apply language
     if (data.language && data.language !== 'auto') fingerprint.language = data.language;
 
+    const proxyMode = (data && data.proxyMode === 'tun') ? 'tun' : 'app_proxy';
+    const proxyEngine = proxyMode === 'tun' ? 'sing-box' : (data.proxyEngine || 'xray');
+    const tun = (proxyMode === 'tun' && data && data.tun && typeof data.tun === 'object') ? data.tun : undefined;
+
     const newProfile = {
         id: uuidv4(),
         name: data.name,
         proxyStr: data.proxyStr,
-        proxyEngine: data.proxyEngine || 'xray',
+        proxyEngine,
+        proxyMode,
+        tun,
         tags: data.tags || [],
         fingerprint: fingerprint,
         preProxyOverride: 'default',
@@ -1368,6 +1600,13 @@ ipcMain.handle('save-profile', async (event, data) => {
     return newProfile;
 });
 ipcMain.handle('delete-profile', async (event, id) => {
+    const resolved = (() => {
+        try { return resolveProfileDirOrThrow(id); } catch (e) { return null; }
+    })();
+    if (!resolved) return false;
+    id = resolved.id;
+    const profileDir = resolved.profileDir;
+
     // 关闭正在运行的进程
     if (activeProcesses[id]) {
         await forceKill(getProxyPid(activeProcesses[id]));
@@ -1396,7 +1635,6 @@ ipcMain.handle('delete-profile', async (event, id) => {
     await fs.writeJson(PROFILES_FILE, profiles);
 
     // 永久删除 profile 文件夹（带重试机制）
-    const profileDir = path.join(DATA_PATH, id);
     let deleted = false;
 
     // 尝试删除 3 次
@@ -1438,6 +1676,14 @@ ipcMain.handle('delete-profile', async (event, id) => {
 
 ipcMain.handle('stop-profile', async (event, id) => {
     if (!id) return { success: false, error: 'Missing id' };
+    let resolved;
+    try {
+        resolved = resolveProfileDirOrThrow(id);
+    } catch (e) {
+        return { success: false, error: 'Invalid id' };
+    }
+    id = resolved.id;
+    const profileDir = resolved.profileDir;
     if (!activeProcesses[id]) return { success: true, stopped: false };
     try {
         try {
@@ -1476,7 +1722,7 @@ ipcMain.handle('stop-profile', async (event, id) => {
                     stage: 'stop',
                     message: e.message,
                     engine: activeProcesses[id] ? activeProcesses[id].proxyEngine : (p.proxyEngine || 'xray'),
-                    logPath: path.join(DATA_PATH, id, (activeProcesses[id] && activeProcesses[id].proxyEngine === 'sing-box') ? 'singbox_run.log' : 'xray_run.log')
+                    logPath: path.join(profileDir, (activeProcesses[id] && activeProcesses[id].proxyEngine === 'sing-box') ? 'singbox_run.log' : 'xray_run.log')
                 };
                 await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
             }
@@ -1521,19 +1767,60 @@ ipcMain.handle('select-extension-folder', async () => {
     return filePaths && filePaths.length > 0 ? filePaths[0] : null;
 });
 ipcMain.handle('add-user-extension', async (e, extPath) => {
+    const raw = typeof extPath === 'string' ? extPath.trim() : '';
+    if (!raw) return false;
+    if (!path.isAbsolute(raw)) return false;
+
+    const resolved = path.resolve(raw);
+    try {
+        const st = await fs.stat(resolved);
+        if (!st.isDirectory()) return false;
+    } catch (e) {
+        return false;
+    }
+
+    const manifestPath = path.join(resolved, 'manifest.json');
+    if (!fs.existsSync(manifestPath)) return false;
+
     const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
     if (!settings.userExtensions) settings.userExtensions = [];
-    if (!settings.userExtensions.includes(extPath)) {
-        settings.userExtensions.push(extPath);
+
+    const canonical = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    const existing = (settings.userExtensions || []).some((p) => {
+        if (typeof p !== 'string') return false;
+        try {
+            const r = path.resolve(p);
+            const c = process.platform === 'win32' ? r.toLowerCase() : r;
+            return c === canonical;
+        } catch (e) {
+            return false;
+        }
+    });
+    if (!existing) {
+        settings.userExtensions.push(resolved);
         await fs.writeJson(SETTINGS_FILE, settings);
     }
     return true;
 });
 ipcMain.handle('remove-user-extension', async (e, extPath) => {
     if (!fs.existsSync(SETTINGS_FILE)) return true;
+    const raw = typeof extPath === 'string' ? extPath.trim() : '';
+    const target = (raw && path.isAbsolute(raw)) ? path.resolve(raw) : null;
+    const canonicalTarget = target ? (process.platform === 'win32' ? target.toLowerCase() : target) : null;
+
     const settings = await fs.readJson(SETTINGS_FILE);
     if (settings.userExtensions) {
-        settings.userExtensions = settings.userExtensions.filter(p => p !== extPath);
+        settings.userExtensions = settings.userExtensions.filter((p) => {
+            if (typeof p !== 'string') return false;
+            if (!canonicalTarget) return p !== extPath;
+            try {
+                const r = path.resolve(p);
+                const c = process.platform === 'win32' ? r.toLowerCase() : r;
+                return c !== canonicalTarget;
+            } catch (e) {
+                return p !== extPath;
+            }
+        });
         await fs.writeJson(SETTINGS_FILE, settings);
     }
     return true;
@@ -1541,7 +1828,7 @@ ipcMain.handle('remove-user-extension', async (e, extPath) => {
 ipcMain.handle('get-user-extensions', async () => {
     if (!fs.existsSync(SETTINGS_FILE)) return [];
     const settings = await fs.readJson(SETTINGS_FILE);
-    return settings.userExtensions || [];
+    return (settings.userExtensions || []).filter((p) => typeof p === 'string' && p.trim());
 });
 ipcMain.handle('open-url', async (e, url) => {
     const u = parseHttpUrlOrThrow(url);
@@ -1568,9 +1855,14 @@ ipcMain.handle('select-data-directory', async () => {
 ipcMain.handle('set-data-directory', async (e, { newPath, migrate }) => {
     try {
         // 验证路径
-        if (!newPath) {
+        if (typeof newPath !== 'string' || !newPath.trim()) {
             return { success: false, error: 'Invalid path' };
         }
+        newPath = newPath.trim();
+        if (!path.isAbsolute(newPath)) {
+            return { success: false, error: 'Invalid path' };
+        }
+        newPath = path.resolve(newPath);
 
         // 确保目录存在
         await fs.ensureDir(newPath);
@@ -1601,10 +1893,12 @@ ipcMain.handle('set-data-directory', async (e, { newPath, migrate }) => {
             // 迁移所有环境数据目录
             const profiles = fs.existsSync(oldProfiles) ? await fs.readJson(oldProfiles) : [];
             for (const profile of profiles) {
-                const oldDir = path.join(DATA_PATH, profile.id);
-                const newDir = path.join(newPath, profile.id);
+                const safeProfileId = normalizeProfileId(profile && profile.id);
+                if (!safeProfileId) continue;
+                const oldDir = path.join(DATA_PATH, safeProfileId);
+                const newDir = path.join(newPath, safeProfileId);
                 if (fs.existsSync(oldDir)) {
-                    console.log(`Migrating profile ${profile.id}...`);
+                    console.log(`Migrating profile ${safeProfileId}...`);
                     await fs.copy(oldDir, newDir);
                 }
             }
@@ -1716,10 +2010,11 @@ ipcMain.handle('get-export-profiles', async () => {
 ipcMain.handle('export-selected-data', async (e, { type, profileIds }) => {
     const allProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
     const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
+    const requestedIds = Array.isArray(profileIds) ? profileIds : [];
 
     // 过滤选中的环境
     const selectedProfiles = allProfiles
-        .filter(p => profileIds.includes(p.id))
+        .filter(p => requestedIds.includes(p.id))
         .map(p => ({
             ...p,
             fingerprint: cleanFingerprint(p.fingerprint)
@@ -1781,10 +2076,11 @@ ipcMain.handle('export-full-backup', async (e, { profileIds, password }) => {
     try {
         const allProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
         const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
+        const requestedIds = Array.isArray(profileIds) ? profileIds : [];
 
         // 过滤选中的环境
         const selectedProfiles = allProfiles
-            .filter(p => profileIds.includes(p.id))
+            .filter(p => requestedIds.includes(p.id))
             .map(p => ({
                 ...p,
                 fingerprint: cleanFingerprint(p.fingerprint)
@@ -1803,7 +2099,9 @@ ipcMain.handle('export-full-backup', async (e, { profileIds, password }) => {
         // 收集浏览器数据
         // 浏览器数据存储在 DATA_PATH/<profileId>/browser_data/Default/
         for (const profile of selectedProfiles) {
-            const profileDataDir = path.join(DATA_PATH, profile.id, 'browser_data');
+            const safeProfileId = normalizeProfileId(profile && profile.id);
+            if (!safeProfileId) continue;
+            const profileDataDir = path.join(DATA_PATH, safeProfileId, 'browser_data');
             if (fs.existsSync(profileDataDir)) {
                 const defaultDir = path.join(profileDataDir, 'Default');
                 if (fs.existsSync(defaultDir)) {
@@ -1818,7 +2116,7 @@ ipcMain.handle('export-full-backup', async (e, { profileIds, password }) => {
                                 const content = await fs.readFile(filePath);
                                 browserFiles[fileName] = content.toString('base64');
                             } catch (err) {
-                                console.error(`Failed to read ${fileName} for ${profile.id}:`, err.message);
+                                console.error(`Failed to read ${fileName} for ${safeProfileId}:`, err.message);
                             }
                         }
                     }
@@ -1845,7 +2143,7 @@ ipcMain.handle('export-full-backup', async (e, { profileIds, password }) => {
                     }
 
                     if (Object.keys(browserFiles).length > 0) {
-                        backupData.browserData[profile.id] = browserFiles;
+                        backupData.browserData[safeProfileId] = browserFiles;
                     }
                 }
             }
@@ -1897,14 +2195,19 @@ ipcMain.handle('import-full-backup', async (e, { password }) => {
         // 还原 profiles
         const currentProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
         let importedCount = 0;
+        const idMap = {};
 
-        for (const profile of backupData.profiles) {
-            const idx = currentProfiles.findIndex(cp => cp.id === profile.id);
-            if (idx > -1) {
-                currentProfiles[idx] = profile;
-            } else {
-                currentProfiles.push(profile);
-            }
+        const incomingProfiles = Array.isArray(backupData.profiles) ? backupData.profiles : [];
+        for (const rawProfile of incomingProfiles) {
+            if (!rawProfile || typeof rawProfile !== 'object') continue;
+            const originalId = typeof rawProfile.id === 'string' ? rawProfile.id : null;
+            const safeId = normalizeProfileId(originalId) || uuidv4();
+            if (originalId) idMap[originalId] = safeId;
+
+            const profile = { ...rawProfile, id: safeId };
+            const idx = currentProfiles.findIndex(cp => cp.id === safeId);
+            if (idx > -1) currentProfiles[idx] = profile;
+            else currentProfiles.push(profile);
             importedCount++;
         }
         await fs.writeJson(PROFILES_FILE, currentProfiles);
@@ -1931,22 +2234,47 @@ ipcMain.handle('import-full-backup', async (e, { password }) => {
 
         // 还原浏览器数据
         // 浏览器数据存储在 DATA_PATH/<profileId>/browser_data/Default/
-        for (const [profileId, browserFiles] of Object.entries(backupData.browserData || {})) {
-            const profileDataDir = path.join(DATA_PATH, profileId, 'browser_data');
+        const allowedBrowserFiles = new Set(['Bookmarks', 'Cookies', 'Login Data', 'Web Data', 'Preferences']);
+        const localStorageFileRe = /^[0-9A-Za-z._-]{1,200}\.(ldb|log)$/;
+
+        for (const [backupProfileId, rawBrowserFiles] of Object.entries(backupData.browserData || {})) {
+            const mappedId = (typeof backupProfileId === 'string' && idMap[backupProfileId]) ? idMap[backupProfileId] : backupProfileId;
+            const safeProfileId = normalizeProfileId(mappedId);
+            if (!safeProfileId) continue;
+
+            let resolved;
+            try {
+                resolved = resolveProfileDirOrThrow(safeProfileId);
+            } catch (e) {
+                continue;
+            }
+
+            if (!rawBrowserFiles || typeof rawBrowserFiles !== 'object' || Array.isArray(rawBrowserFiles)) continue;
+
+            const profileDataDir = path.join(resolved.profileDir, 'browser_data');
             const defaultDir = path.join(profileDataDir, 'Default');
             await fs.ensureDir(defaultDir);
 
-            for (const [fileName, content] of Object.entries(browserFiles)) {
+            for (const [fileName, content] of Object.entries(rawBrowserFiles)) {
                 if (fileName === 'LocalStorage') {
-                    // 还原 Local Storage
+                    const lsObj = content;
+                    if (!lsObj || typeof lsObj !== 'object' || Array.isArray(lsObj)) continue;
+
                     const localStorageDir = path.join(defaultDir, 'Local Storage', 'leveldb');
                     await fs.ensureDir(localStorageDir);
-                    for (const [lsFileName, lsContent] of Object.entries(content)) {
+
+                    for (const [lsFileName, lsContent] of Object.entries(lsObj)) {
+                        if (typeof lsFileName !== 'string') continue;
+                        if (path.basename(lsFileName) !== lsFileName) continue;
+                        if (!localStorageFileRe.test(lsFileName)) continue;
+                        if (typeof lsContent !== 'string') continue;
+
                         const lsFilePath = path.join(localStorageDir, lsFileName);
                         await fs.writeFile(lsFilePath, Buffer.from(lsContent, 'base64'));
                     }
                 } else {
-                    // 还原普通文件
+                    if (!allowedBrowserFiles.has(fileName)) continue;
+                    if (typeof content !== 'string') continue;
                     const filePath = path.join(defaultDir, fileName);
                     await fs.writeFile(filePath, Buffer.from(content, 'base64'));
                 }
@@ -1979,14 +2307,14 @@ ipcMain.handle('import-data', async () => {
             if (data.profiles || data.preProxies || data.subscriptions) {
                 if (Array.isArray(data.profiles)) {
                     const currentProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
-                    data.profiles.forEach(p => {
-                        const idx = currentProfiles.findIndex(cp => cp.id === p.id);
+                    for (const rawProfile of data.profiles) {
+                        if (!rawProfile || typeof rawProfile !== 'object') continue;
+                        const safeId = normalizeProfileId(rawProfile.id) || uuidv4();
+                        const p = { ...rawProfile, id: safeId };
+                        const idx = currentProfiles.findIndex(cp => cp.id === safeId);
                         if (idx > -1) currentProfiles[idx] = p;
-                        else {
-                            if (!p.id) p.id = uuidv4();
-                            currentProfiles.push(p);
-                        }
-                    });
+                        else currentProfiles.push(p);
+                    }
                     await fs.writeJson(PROFILES_FILE, currentProfiles);
                     updated = true;
                 }
@@ -2059,6 +2387,8 @@ ipcMain.handle('export-data', async (e, type) => {
 ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, options = {}) => {
     const sender = event.sender;
     const skipProxyWarnOnce = Boolean(options && (options.skipProxyWarnOnce || options.skipProxyConsistencyWarnOnce));
+    const resolvedProfile = resolveProfileDirOrThrow(profileId);
+    profileId = resolvedProfile.id;
 
     try {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2094,6 +2424,18 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
             delete activeProcesses[profileId];
         }
         if (activeProcesses[profileId]) return "环境已唤醒";
+    }
+
+    // TUN mode changes system routes; do not allow launching other profiles while a TUN profile is running.
+    try {
+        const runningTun = Object.entries(activeProcesses || {}).find(([, p]) => p && p.proxyMode === 'tun');
+        if (runningTun && runningTun[0] && runningTun[0] !== profileId) {
+            const err = new Error('A TUN profile is currently running. Stop it before launching other profiles.');
+            err.code = 'TUN_ALREADY_RUNNING';
+            throw err;
+        }
+    } catch (e) {
+        if (e && e.code === 'TUN_ALREADY_RUNNING') throw e;
     }
 
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -2222,7 +2564,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
 
     try {
         const localPort = await getPort();
-        const profileDir = path.join(DATA_PATH, profileId);
+        const profileDir = resolvedProfile.profileDir;
         const userDataDir = path.join(profileDir, 'browser_data');
         const xrayConfigPath = path.join(profileDir, 'config.json');
         const xrayLogPath = path.join(profileDir, 'xray_run.log');
@@ -2245,7 +2587,23 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
             await fs.writeJson(preferencesPath, preferences);
         } catch (e) { }
 
-        const proxyEngine = getProxyEngineFromProfile(profile);
+        const proxyMode = profile && profile.proxyMode === 'tun' ? 'tun' : 'app_proxy';
+        let proxyEngine = getProxyEngineFromProfile(profile);
+        // Auto-switch engine when the proxy node requires sing-box (sb://, hysteria, ss+plugin, wireguard/shadowtls bundles, etc.).
+        // This keeps the "default xray" UX while supporting more node types out of the box.
+        try {
+            const inferred = inferProxyTestEngine(normalizeProxyInputRaw(profile.proxyStr));
+            if (proxyMode === 'tun' && proxyEngine !== 'sing-box') {
+                proxyEngine = 'sing-box';
+                profile.proxyEngine = 'sing-box';
+                try { await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 }); } catch (e) { }
+            } else if (proxyEngine === 'xray' && inferred === 'sing-box') {
+                proxyEngine = 'sing-box';
+                profile.proxyEngine = 'sing-box';
+                try { await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 }); } catch (e) { }
+            }
+        } catch (e) { }
+
         const logPath = proxyEngine === 'sing-box' ? singboxLogPath : xrayLogPath;
         try {
             const { rotateLogIfNeeded } = require('./proxy/logRotate');
@@ -2281,7 +2639,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
         // 4. 构建启动参数（性能优化）
 
         const launchArgs = [
-            `--proxy-server=socks5://127.0.0.1:${localPort}`,
+            ...(proxyMode === 'tun' ? [] : [`--proxy-server=socks5://127.0.0.1:${localPort}`]),
             `--user-data-dir=${userDataDir}`,
             `--window-size=${profile.fingerprint?.window?.width || 1280},${profile.fingerprint?.window?.height || 800}`,
             '--restore-last-session',
@@ -2360,11 +2718,14 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
         activeProcesses[profileId] = {
             proxyPid: xrayProcess.pid,
             proxyEngine: proxyResult.engine,
+            proxyMode,
             browser,
             logFd: logFd  // 存储日志文件描述符，用于后续关闭
         };
         sender.send('profile-status', { id: profileId, status: 'running' });
-        await autoApplySystemProxyForRunningProfile({ profileId, localPort });
+        if (proxyMode !== 'tun') {
+            await autoApplySystemProxyForRunningProfile({ profileId, localPort });
+        }
 
         // Apply CDP overrides (timezone/locale/geo/UA-CH) prior to any user navigation.
         // Note: some detections can flag CDP usage; for enterprise self-use we prioritize determinism.
@@ -2389,6 +2750,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
 
                 delete activeProcesses[profileId];
                 await forceKill(pid);
+                await autoClearSystemProxyIfEnabled();
 
                 // 性能优化：清理缓存文件，节省磁盘空间
                 try {
@@ -2413,7 +2775,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
                 stage: 'launch',
                 message: err.message,
                 engine: getProxyEngineFromProfile(profile),
-                logPath: path.join(DATA_PATH, profileId, getProxyEngineFromProfile(profile) === 'sing-box' ? 'singbox_run.log' : 'xray_run.log')
+                logPath: path.join(resolvedProfile.profileDir, getProxyEngineFromProfile(profile) === 'sing-box' ? 'singbox_run.log' : 'xray_run.log')
             };
             await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
         } catch (e) { }

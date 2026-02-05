@@ -258,148 +258,148 @@ function getProxyRemark(link) {
 }
 
 function renderHelpContent() {
-    const manualHTML = curLang === 'en' ?
-        `<div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">1. Create Environment</h4><p style="font-size:14px;">Enter a name and proxy link. The system auto-generates a unique fingerprint with randomized Hardware.</p></div>
-         <div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">2. Launch</h4><p style="font-size:14px;">Click Launch. A green badge indicates active status. Each environment is fully isolated.</p></div>
-         <div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">3. Pre-Proxy (Optional)</h4><p style="font-size:14px;">Chain proxy for IP hiding. Use TCP protocols for stability.</p></div>
-         <div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">4. Best Practices</h4><p style="font-size:14px;">• Use high-quality residential IPs<br>• Keep one account per environment<br>• Avoid frequent switching<br>• Simulate real user behavior</p></div>` :
-        `<div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">1. 新建环境</h4><p style="font-size:14px;">填写名称与代理链接。系统自动生成唯一指纹（硬件随机化）。</p></div>
-         <div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">2. 启动环境</h4><p style="font-size:14px;">点击启动，列表中显示绿色运行标签。每个环境完全隔离。</p></div>
-         <div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">3. 前置代理（可选）</h4><p style="font-size:14px;">用于隐藏本机IP或链路加速。建议使用TCP协议。</p></div>
-         <div style="margin-bottom:25px;"><h4 style="color:var(--accent);margin-bottom:8px;">4. 最佳实践</h4><p style="font-size:14px;">• 使用高质量住宅IP<br>• 一个账号固定一个环境<br>• 避免频繁切换<br>• 模拟真实用户行为</p></div>`;
-
-    const aboutHTML = curLang === 'en' ?
-        `<div style="text-align:center;margin-bottom:24px;padding:20px 0;">
-            <div style="font-size:28px;font-weight:700;color:var(--text-primary);letter-spacing:1px;">Geek<span style="color:var(--accent);">EZ</span></div>
-            <div style="font-size:12px;opacity:0.5;margin-top:4px;">v1.3.4 · Anti-detect Browser</div>
-         </div>
-         
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, var(--accent), #7c3aed);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">CORE TECHNOLOGY</h4>
-         </div>
-         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px;">
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">🧬 Real Chrome Kernel</div>
-                <div style="font-size:11px;opacity:0.7;">Native Chrome + JS Injection</div>
-            </div>
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">🔐 Hardware Fingerprint</div>
-                <div style="font-size:11px;opacity:0.7;">CPU/Memory Randomization</div>
-            </div>
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">🌍 60+ Languages</div>
-                <div style="font-size:11px;opacity:0.7;">Timezone & Locale Spoofing</div>
-            </div>
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">⚡ GPU Acceleration</div>
-                <div style="font-size:11px;opacity:0.7;">Smooth UI Performance</div>
-            </div>
-         </div>
-
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, #4CAF50, #2196F3);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">DETECTION STATUS</h4>
-         </div>
-         <div style="background:var(--input-bg);padding:14px;border-radius:8px;border:1px solid var(--border);margin-bottom:24px;">
-            <div style="display:flex;flex-wrap:wrap;gap:16px;">
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> Browserscan Passed</div>
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> Pixelscan Clean</div>
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> Real TLS Fingerprint</div>
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> Minimal API Hook</div>
-            </div>
-         </div>
-
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, #FF9800, #F44336);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">PLATFORM COMPATIBILITY</h4>
-         </div>
-         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px;">
-            <span style="background:linear-gradient(135deg, rgba(243,156,18,0.2), rgba(243,156,18,0.1));color:#f39c12;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">Amazon</span>
-            <span style="background:linear-gradient(135deg, rgba(39,174,96,0.2), rgba(39,174,96,0.1));color:#27ae60;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">TikTok</span>
-            <span style="background:linear-gradient(135deg, rgba(41,128,185,0.2), rgba(41,128,185,0.1));color:#2980b9;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">Facebook</span>
-            <span style="background:linear-gradient(135deg, rgba(230,126,34,0.2), rgba(230,126,34,0.1));color:#e67e22;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">Shopee</span>
-            <span style="background:linear-gradient(135deg, rgba(191,0,0,0.2), rgba(191,0,0,0.1));color:#bf0000;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">Rakuten</span>
-            <span style="background:linear-gradient(135deg, rgba(241,196,15,0.2), rgba(241,196,15,0.1));color:#f1c40f;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">Mercado</span>
-         </div>
-
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, #9C27B0, #E91E63);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">COMMUNITY</h4>
-         </div>
-         <div style="background:linear-gradient(135deg, var(--input-bg), var(--card-bg));padding:16px;border-radius:8px;border:1px solid var(--border);text-align:center;">
-            <div style="font-size:18px;margin-bottom:6px;">💬</div>
-            <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">Join our QQ Group for support</div>
-            <a href="tencent://groupwpa/?subcmd=all&uin=1079216892" title="Click to join QQ Group" style="font-size:16px;font-weight:600;color:var(--accent);letter-spacing:1px;text-decoration:none;">Click to join: 1079216892</a>
-         </div>` :
-        `<div style="text-align:center;margin-bottom:24px;padding:20px 0;">
-            <div style="font-size:28px;font-weight:700;color:var(--text-primary);letter-spacing:1px;">Geek<span style="color:var(--accent);">EZ</span></div>
-            <div style="font-size:12px;opacity:0.5;margin-top:4px;">v1.3.4 · 指纹浏览器</div>
-         </div>
-         
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, var(--accent), #7c3aed);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">核心技术</h4>
-         </div>
-         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px;">
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">🧬 真实 Chrome 内核</div>
-                <div style="font-size:11px;opacity:0.7;">原生内核 + JS 注入</div>
-            </div>
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">🔐 硬件指纹随机化</div>
-                <div style="font-size:11px;opacity:0.7;">CPU/内存完全随机</div>
-            </div>
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">🌍 60+ 语言适配</div>
-                <div style="font-size:11px;opacity:0.7;">时区与语言完美伪装</div>
-            </div>
-            <div style="background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);">
-                <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;">⚡ GPU 硬件加速</div>
-                <div style="font-size:11px;opacity:0.7;">流畅 UI 渲染体验</div>
-            </div>
-         </div>
-
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, #4CAF50, #2196F3);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">检测状态</h4>
-         </div>
-         <div style="background:var(--input-bg);padding:14px;border-radius:8px;border:1px solid var(--border);margin-bottom:24px;">
-            <div style="display:flex;flex-wrap:wrap;gap:16px;">
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> Browserscan 全绿</div>
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> Pixelscan 无检测</div>
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> TLS 指纹真实</div>
-                <div style="font-size:12px;"><span style="color:#4CAF50;">✓</span> 最小化 API Hook</div>
-            </div>
-         </div>
-
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, #FF9800, #F44336);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">平台适配</h4>
-         </div>
-         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px;">
-            <span style="background:linear-gradient(135deg, rgba(243,156,18,0.2), rgba(243,156,18,0.1));color:#f39c12;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">Amazon</span>
-            <span style="background:linear-gradient(135deg, rgba(39,174,96,0.2), rgba(39,174,96,0.1));color:#27ae60;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">TikTok</span>
-            <span style="background:linear-gradient(135deg, rgba(41,128,185,0.2), rgba(41,128,185,0.1));color:#2980b9;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">Facebook</span>
-            <span style="background:linear-gradient(135deg, rgba(230,126,34,0.2), rgba(230,126,34,0.1));color:#e67e22;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">虾皮</span>
-            <span style="background:linear-gradient(135deg, rgba(191,0,0,0.2), rgba(191,0,0,0.1));color:#bf0000;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">乐天</span>
-            <span style="background:linear-gradient(135deg, rgba(241,196,15,0.2), rgba(241,196,15,0.1));color:#f1c40f;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;">美客多</span>
-         </div>
-
-         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <div style="width:4px;height:18px;background:linear-gradient(180deg, #9C27B0, #E91E63);border-radius:2px;"></div>
-            <h4 style="margin:0;color:var(--text-primary);font-size:14px;font-weight:600;">交流社群</h4>
-         </div>
-         <div style="background:linear-gradient(135deg, var(--input-bg), var(--card-bg));padding:16px;border-radius:8px;border:1px solid var(--border);text-align:center;">
-            <div style="font-size:18px;margin-bottom:6px;">💬</div>
-            <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">加入 QQ 群获取支持与交流</div>
-            <a href="tencent://groupwpa/?subcmd=all&uin=1079216892" title="点击加入QQ群" style="font-size:16px;font-weight:600;color:var(--accent);letter-spacing:1px;text-decoration:none;">点击加入：1079216892</a>
-         </div>`;
-
     const manualEl = document.getElementById('help-manual');
     const aboutEl = document.getElementById('help-about');
-    if (manualEl) manualEl.innerHTML = manualHTML;
-    if (aboutEl) aboutEl.innerHTML = aboutHTML;
+    const isEn = curLang === 'en';
+
+    function createEl(tag, options = {}, children = []) {
+        const el = document.createElement(tag);
+        if (options.className) el.className = options.className;
+        if (options.text !== undefined && options.text !== null) el.textContent = String(options.text);
+        if (options.style) el.style.cssText = String(options.style);
+        if (options.href) el.setAttribute('href', String(options.href));
+        if (options.title) el.setAttribute('title', String(options.title));
+        if (options.attrs && typeof options.attrs === 'object') {
+            for (const [k, v] of Object.entries(options.attrs)) {
+                if (v === undefined || v === null) continue;
+                el.setAttribute(k, String(v));
+            }
+        }
+        for (const child of children) {
+            if (!child) continue;
+            el.appendChild(child);
+        }
+        return el;
+    }
+
+    function appendLinesWithBreaks(parent, lines) {
+        lines.forEach((line, idx) => {
+            parent.appendChild(document.createTextNode(line));
+            if (idx < lines.length - 1) parent.appendChild(document.createElement('br'));
+        });
+    }
+
+    function appendSectionHeader(container, title, gradient) {
+        const header = createEl('div', { style: 'display:flex;align-items:center;gap:10px;margin-bottom:16px;' });
+        header.appendChild(createEl('div', { style: `width:4px;height:18px;background:${gradient};border-radius:2px;` }));
+        header.appendChild(createEl('h4', { style: 'margin:0;color:var(--text-primary);font-size:14px;font-weight:600;', text: title }));
+        container.appendChild(header);
+    }
+
+    if (manualEl) {
+        manualEl.replaceChildren();
+
+        const manualSections = isEn
+            ? [
+                { title: '1. Create Environment', text: 'Enter a name and proxy link. The system auto-generates a unique fingerprint with randomized Hardware.' },
+                { title: '2. Launch', text: 'Click Launch. A green badge indicates active status. Each environment is fully isolated.' },
+                { title: '3. Pre-Proxy (Optional)', text: 'Chain proxy for IP hiding. Use TCP protocols for stability.' },
+                { title: '4. Best Practices', lines: ['• Use high-quality residential IPs', '• Keep one account per environment', '• Avoid frequent switching', '• Simulate real user behavior'] },
+            ]
+            : [
+                { title: '1. 新建环境', text: '填写名称与代理链接。系统自动生成唯一指纹（硬件随机化）。' },
+                { title: '2. 启动环境', text: '点击启动，列表中显示绿色运行标签。每个环境完全隔离。' },
+                { title: '3. 前置代理（可选）', text: '用于隐藏本机IP或链路加速。建议使用TCP协议。' },
+                { title: '4. 最佳实践', lines: ['• 使用高质量住宅IP', '• 一个账号固定一个环境', '• 避免频繁切换', '• 模拟真实用户行为'] },
+            ];
+
+        for (const section of manualSections) {
+            const block = createEl('div', { style: 'margin-bottom:25px;' });
+            block.appendChild(createEl('h4', { style: 'color:var(--accent);margin-bottom:8px;', text: section.title }));
+            const p = createEl('p', { style: 'font-size:14px;' });
+            if (Array.isArray(section.lines)) appendLinesWithBreaks(p, section.lines);
+            else p.textContent = section.text || '';
+            block.appendChild(p);
+            manualEl.appendChild(block);
+        }
+    }
+
+    if (aboutEl) {
+        aboutEl.replaceChildren();
+
+        const top = createEl('div', { style: 'text-align:center;margin-bottom:24px;padding:20px 0;' });
+        const brand = createEl('div', { style: 'font-size:28px;font-weight:700;color:var(--text-primary);letter-spacing:1px;' });
+        brand.appendChild(document.createTextNode('Geek'));
+        brand.appendChild(createEl('span', { style: 'color:var(--accent);', text: 'EZ' }));
+        top.appendChild(brand);
+        top.appendChild(createEl('div', { style: 'font-size:12px;opacity:0.5;margin-top:4px;', text: isEn ? 'v1.3.4 · Anti-detect Browser' : 'v1.3.4 · 指纹浏览器' }));
+        aboutEl.appendChild(top);
+
+        appendSectionHeader(aboutEl, isEn ? 'CORE TECHNOLOGY' : '核心技术', 'linear-gradient(180deg, var(--accent), #7c3aed)');
+        const coreGrid = createEl('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px;' });
+        const coreCards = isEn
+            ? [
+                { title: '🧬 Real Chrome Kernel', desc: 'Native Chrome + JS Injection' },
+                { title: '🔐 Hardware Fingerprint', desc: 'CPU/Memory Randomization' },
+                { title: '🌍 60+ Languages', desc: 'Timezone & Locale Spoofing' },
+                { title: '⚡ GPU Acceleration', desc: 'Smooth UI Performance' },
+            ]
+            : [
+                { title: '🧬 真实 Chrome 内核', desc: '原生内核 + JS 注入' },
+                { title: '🔐 硬件指纹随机化', desc: 'CPU/内存完全随机' },
+                { title: '🌍 60+ 语言适配', desc: '时区与语言完美伪装' },
+                { title: '⚡ GPU 硬件加速', desc: '流畅 UI 渲染体验' },
+            ];
+        for (const card of coreCards) {
+            const cardEl = createEl('div', { style: 'background:var(--input-bg);padding:12px;border-radius:8px;border:1px solid var(--border);' });
+            cardEl.appendChild(createEl('div', { style: 'font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px;', text: card.title }));
+            cardEl.appendChild(createEl('div', { style: 'font-size:11px;opacity:0.7;', text: card.desc }));
+            coreGrid.appendChild(cardEl);
+        }
+        aboutEl.appendChild(coreGrid);
+
+        appendSectionHeader(aboutEl, isEn ? 'DETECTION STATUS' : '检测状态', 'linear-gradient(180deg, #4CAF50, #2196F3)');
+        const statusBox = createEl('div', { style: 'background:var(--input-bg);padding:14px;border-radius:8px;border:1px solid var(--border);margin-bottom:24px;' });
+        const statusWrap = createEl('div', { style: 'display:flex;flex-wrap:wrap;gap:16px;' });
+        const statusItems = isEn
+            ? ['Browserscan Passed', 'Pixelscan Clean', 'Real TLS Fingerprint', 'Minimal API Hook']
+            : ['Browserscan 全绿', 'Pixelscan 无检测', 'TLS 指纹真实', '最小化 API Hook'];
+        for (const text of statusItems) {
+            const item = createEl('div', { style: 'font-size:12px;' });
+            item.appendChild(createEl('span', { style: 'color:#4CAF50;', text: '✓' }));
+            item.appendChild(document.createTextNode(` ${text}`));
+            statusWrap.appendChild(item);
+        }
+        statusBox.appendChild(statusWrap);
+        aboutEl.appendChild(statusBox);
+
+        appendSectionHeader(aboutEl, isEn ? 'PLATFORM COMPATIBILITY' : '平台适配', 'linear-gradient(180deg, #FF9800, #F44336)');
+        const platformWrap = createEl('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px;' });
+        const platformTags = [
+            { style: 'background:linear-gradient(135deg, rgba(243,156,18,0.2), rgba(243,156,18,0.1));color:#f39c12;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;', text: 'Amazon' },
+            { style: 'background:linear-gradient(135deg, rgba(39,174,96,0.2), rgba(39,174,96,0.1));color:#27ae60;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;', text: 'TikTok' },
+            { style: 'background:linear-gradient(135deg, rgba(41,128,185,0.2), rgba(41,128,185,0.1));color:#2980b9;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;', text: 'Facebook' },
+            { style: 'background:linear-gradient(135deg, rgba(230,126,34,0.2), rgba(230,126,34,0.1));color:#e67e22;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;', text: isEn ? 'Shopee' : '虾皮' },
+            { style: 'background:linear-gradient(135deg, rgba(191,0,0,0.2), rgba(191,0,0,0.1));color:#bf0000;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;', text: isEn ? 'Rakuten' : '乐天' },
+            { style: 'background:linear-gradient(135deg, rgba(241,196,15,0.2), rgba(241,196,15,0.1));color:#f1c40f;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:500;', text: isEn ? 'Mercado' : '美客多' },
+        ];
+        for (const tag of platformTags) {
+            platformWrap.appendChild(createEl('span', { style: tag.style, text: tag.text }));
+        }
+        aboutEl.appendChild(platformWrap);
+
+        appendSectionHeader(aboutEl, isEn ? 'COMMUNITY' : '交流社群', 'linear-gradient(180deg, #9C27B0, #E91E63)');
+        const communityCard = createEl('div', { style: 'background:linear-gradient(135deg, var(--input-bg), var(--card-bg));padding:16px;border-radius:8px;border:1px solid var(--border);text-align:center;' });
+        communityCard.appendChild(createEl('div', { style: 'font-size:18px;margin-bottom:6px;', text: '💬' }));
+        communityCard.appendChild(createEl('div', { style: 'font-size:12px;opacity:0.8;margin-bottom:8px;', text: isEn ? 'Join our QQ Group for support' : '加入 QQ 群获取支持与交流' }));
+        communityCard.appendChild(createEl('a', {
+            style: 'font-size:16px;font-weight:600;color:var(--accent);letter-spacing:1px;text-decoration:none;',
+            href: 'tencent://groupwpa/?subcmd=all&uin=1079216892',
+            title: isEn ? 'Click to join QQ Group' : '点击加入QQ群',
+            text: isEn ? 'Click to join: 1079216892' : '点击加入：1079216892'
+        }));
+        aboutEl.appendChild(communityCard);
+    }
 }
 
 function applyLang() {
@@ -682,6 +682,12 @@ async function init() {
     if (searchInput) {
         searchInput.addEventListener('input', (ev) => filterProfiles(ev.target.value || ''));
     }
+
+    const addProxyMode = document.getElementById('addProxyMode');
+    if (addProxyMode) addProxyMode.addEventListener('change', () => updateProxyModeUi('add'));
+    const editProxyMode = document.getElementById('editProxyMode');
+    if (editProxyMode) editProxyMode.addEventListener('change', () => updateProxyModeUi('edit'));
+
     const exportSelectAll = document.getElementById('exportSelectAll');
     if (exportSelectAll) {
         exportSelectAll.addEventListener('change', () => toggleExportSelectAll());
@@ -1486,31 +1492,6 @@ async function loadProfiles() {
 
             el.appendChild(actionsEl);
 
-            // Legacy innerHTML renderer (kept for reference; disabled)
-            /*
-            el.innerHTML = `
-                <div class="profile-info">
-                    <div style="display:flex; align-items:center;"><h4>${escapeHtml(p.name)}</h4><span id="status-${escapeAttr(p.id)}" class="running-badge ${isRunning ? 'active' : ''}">${isRestarting ? (t('workingStatus') || 'Working...') : (lastStatus === 'stop_failed' ? (t('stopFailedStatus') || 'Stop Failed') : t('runningStatus'))}</span></div>
-                    <div class="profile-meta">
-                        ${tagsHtml} <!-- 插入标签 -->
-                        <span class="tag">${escapeHtml((p.proxyStr || '').split('://')[0].toUpperCase() || 'N/A')}</span>
-                        <span class="tag">${t('engineLabel') || 'Engine'}:${escapeHtml(engine)}</span>
-                        <span class="tag" id="logsize-${escapeAttr(p.id)}">Log:...</span>
-                        <span class="tag">${screen.width}x${screen.height}</span>
-                        <span class="tag" ${leakTagAttrs}>${t('leakStatus') || 'Leak'}:${leakText}</span>
-                        ${lastErr ? `<span class="tag" style="border:1px solid #ef4444;color:#ef4444;cursor:pointer;" data-action="open-log" title="${escapeAttr(lastErr.message || '')}">${escapeHtml(errText)}</span>` : ''}
-                        <span class="tag" style="border:1px solid var(--accent);">
-                            <select class="quick-switch-select no-drag" data-action="quick-pre-proxy">
-                                <option value="default" ${override === 'default' ? 'selected' : ''}>${t('qsDefault')}</option>
-                                <option value="on" ${override === 'on' ? 'selected' : ''}>${t('qsOn')}</option>
-                                <option value="off" ${override === 'off' ? 'selected' : ''}>${t('qsOff')}</option>
-                            </select>
-                        </span>
-                    </div>
-                </div>
-                <div class="actions"><button data-action="launch" class="no-drag" ${isRestarting ? 'disabled' : ''}>${t('launch')}</button><button class="outline no-drag" data-action="restart" ${isRunning && !isRestarting ? '' : 'disabled'}>${isRestarting ? (t('restarting') || 'Restarting...') : (t('restart') || 'Restart')}</button>${lastStatus === 'stop_failed' ? `<button class="outline no-drag" data-action="open-log" style="border-color:#ef4444;color:#ef4444;">${t('openLog') || 'Open Log'}</button><button class="outline no-drag" data-action="restart" title=\"${t('openLog') || 'Open Log'}\">${t('retry') || 'Retry'}</button>` : ''}<button class="outline no-drag" data-action="edit" ${isRestarting ? 'disabled' : ''}>${t('edit')}</button><button class="outline no-drag" data-action="open-log" ${isRestarting ? 'disabled' : ''}>${t('openLog') || 'Open Log'}</button><button class="outline no-drag" data-action="open-rotated-logs" ${isRestarting ? 'disabled' : ''}>${t('rotatedLogsBtn') || 'Rotated'}</button><button class="outline no-drag" data-action="clear-logs" ${isRunning || isRestarting ? 'disabled' : ''}>${t('clearLogs') || 'Clear Logs'}</button><button class="outline no-drag" data-action="clear-logs-history" ${isRunning || isRestarting ? 'disabled' : ''} title="${t('clearLogsHistoryHint') || 'Also removes rotated history logs'}">${t('clearLogsHistory') || 'Clear+History'}</button><button class="outline no-drag" data-action="leak-check" ${isRunning && !isRestarting ? '' : 'disabled'}>${t('leakCheck') || 'LeakCheck'}</button><button class="danger no-drag" data-action="delete" ${isRestarting ? 'disabled' : ''}>${t('delete')}</button></div>
-            `;
-            */
             listEl.appendChild(el);
             // async log size fill (non-blocking)
             setTimeout(async () => {
@@ -1542,6 +1523,23 @@ async function quickUpdatePreProxy(id, val) {
     if (p) { p.preProxyOverride = val; await window.electronAPI.updateProfile(p); }
 }
 
+function updateProxyModeUi(prefix) {
+    const modeEl = document.getElementById(`${prefix}ProxyMode`);
+    const tunEl = document.getElementById(`${prefix}TunOptions`);
+    const engineEl = document.getElementById(`${prefix}ProxyEngine`);
+    if (!modeEl) return;
+    const isTun = modeEl.value === 'tun';
+    if (tunEl) tunEl.style.display = isTun ? 'block' : 'none';
+    if (engineEl) {
+        if (isTun) {
+            engineEl.value = 'sing-box';
+            engineEl.disabled = true;
+        } else {
+            engineEl.disabled = false;
+        }
+    }
+}
+
 function openAddModal() {
     document.getElementById('addName').value = '';
     document.getElementById('addProxy').value = '';
@@ -1560,6 +1558,18 @@ function openAddModal() {
     initCustomLanguageDropdown('addLanguage', 'addLanguageDropdown');
     document.getElementById('addLanguage').value = 'Auto (System Default)';
 
+    const modeEl = document.getElementById('addProxyMode');
+    if (modeEl) modeEl.value = 'app_proxy';
+    const tunAuto = document.getElementById('addTunAutoRoute');
+    if (tunAuto) tunAuto.checked = true;
+    const tunStrict = document.getElementById('addTunStrictRoute');
+    if (tunStrict) tunStrict.checked = true;
+    const tunDns = document.getElementById('addTunDnsHijack');
+    if (tunDns) tunDns.checked = true;
+    const tunMtu = document.getElementById('addTunMtu');
+    if (tunMtu) tunMtu.value = '';
+    updateProxyModeUi('add');
+
     document.getElementById('addModal').style.display = 'flex';
 }
 function closeAddModal() { document.getElementById('addModal').style.display = 'none'; }
@@ -1567,7 +1577,15 @@ function closeAddModal() { document.getElementById('addModal').style.display = '
 async function saveNewProfile() {
     const nameBase = document.getElementById('addName').value.trim();
     const proxyText = document.getElementById('addProxy').value.trim();
-    const proxyEngine = document.getElementById('addProxyEngine') ? document.getElementById('addProxyEngine').value : 'xray';
+    const proxyMode = document.getElementById('addProxyMode') ? document.getElementById('addProxyMode').value : 'app_proxy';
+    let proxyEngine = document.getElementById('addProxyEngine') ? document.getElementById('addProxyEngine').value : 'xray';
+    if (proxyMode === 'tun') proxyEngine = 'sing-box';
+    const tun = proxyMode === 'tun' ? {
+        auto_route: document.getElementById('addTunAutoRoute') ? document.getElementById('addTunAutoRoute').checked : true,
+        strict_route: document.getElementById('addTunStrictRoute') ? document.getElementById('addTunStrictRoute').checked : true,
+        dns_hijack: document.getElementById('addTunDnsHijack') ? document.getElementById('addTunDnsHijack').checked : true,
+        mtu: document.getElementById('addTunMtu') && document.getElementById('addTunMtu').value ? parseInt(document.getElementById('addTunMtu').value) : undefined
+    } : undefined;
     const settings = await window.electronAPI.getSettings().catch(() => ({}));
     const defaultConsistency = settings.defaultProxyConsistency || 'warn';
     const proxyConsistency = document.getElementById('addProxyConsistency') ? document.getElementById('addProxyConsistency').value : defaultConsistency;
@@ -1630,6 +1648,8 @@ async function saveNewProfile() {
                 geolocation,
                 language,
                 proxyEngine,
+                proxyMode,
+                tun,
                 proxyPolicy: { autoLink: true, consistencyPolicy, allowAutofix }
             });
             createdCount++;
@@ -1719,13 +1739,27 @@ async function openEditModal(id) {
     window.__geekez_edit_snapshot = {
         id,
         proxyStr: p.proxyStr,
-        proxyEngine: p.proxyEngine || (p.fingerprint && p.fingerprint.proxyEngine) || 'xray'
+        proxyEngine: p.proxyEngine || (p.fingerprint && p.fingerprint.proxyEngine) || 'xray',
+        proxyMode: p.proxyMode || 'app_proxy'
     };
     const fp = p.fingerprint || {};
     document.getElementById('editName').value = p.name;
     document.getElementById('editProxy').value = p.proxyStr;
     const editProxyEngine = document.getElementById('editProxyEngine');
     if (editProxyEngine) editProxyEngine.value = p.proxyEngine || (fp && fp.proxyEngine) || 'xray';
+
+    const editProxyMode = document.getElementById('editProxyMode');
+    if (editProxyMode) editProxyMode.value = p.proxyMode || 'app_proxy';
+    const tun = (p.tun && typeof p.tun === 'object') ? p.tun : {};
+    const tunAuto = document.getElementById('editTunAutoRoute');
+    if (tunAuto) tunAuto.checked = tun.auto_route === false ? false : true;
+    const tunStrict = document.getElementById('editTunStrictRoute');
+    if (tunStrict) tunStrict.checked = tun.strict_route === false ? false : true;
+    const tunDns = document.getElementById('editTunDnsHijack');
+    if (tunDns) tunDns.checked = tun.dns_hijack === false ? false : true;
+    const tunMtu = document.getElementById('editTunMtu');
+    if (tunMtu) tunMtu.value = (tun.mtu && Number.isFinite(Number(tun.mtu))) ? String(Number(tun.mtu)) : '';
+    updateProxyModeUi('edit');
 
     const editConsistency = document.getElementById('editProxyConsistency');
     if (editConsistency) {
@@ -1796,11 +1830,24 @@ async function saveEditProfile() {
     if (p) {
         const runningIds = await window.electronAPI.getRunningIds();
         const wasRunning = runningIds.includes(p.id);
-        const before = window.__geekez_edit_snapshot || { proxyStr: p.proxyStr, proxyEngine: p.proxyEngine || 'xray' };
+        const before = window.__geekez_edit_snapshot || { proxyStr: p.proxyStr, proxyEngine: p.proxyEngine || 'xray', proxyMode: p.proxyMode || 'app_proxy' };
         p.name = document.getElementById('editName').value;
         p.proxyStr = document.getElementById('editProxy').value;
+        const proxyMode = document.getElementById('editProxyMode') ? document.getElementById('editProxyMode').value : (p.proxyMode || 'app_proxy');
         const editProxyEngine = document.getElementById('editProxyEngine');
-        if (editProxyEngine) p.proxyEngine = editProxyEngine.value || 'xray';
+        p.proxyMode = proxyMode === 'tun' ? 'tun' : 'app_proxy';
+        if (p.proxyMode === 'tun') {
+            p.proxyEngine = 'sing-box';
+            p.tun = {
+                auto_route: document.getElementById('editTunAutoRoute') ? document.getElementById('editTunAutoRoute').checked : true,
+                strict_route: document.getElementById('editTunStrictRoute') ? document.getElementById('editTunStrictRoute').checked : true,
+                dns_hijack: document.getElementById('editTunDnsHijack') ? document.getElementById('editTunDnsHijack').checked : true,
+                mtu: document.getElementById('editTunMtu') && document.getElementById('editTunMtu').value ? parseInt(document.getElementById('editTunMtu').value) : undefined
+            };
+        } else {
+            if (editProxyEngine) p.proxyEngine = editProxyEngine.value || 'xray';
+            if (p.tun) delete p.tun;
+        }
         const editConsistency = document.getElementById('editProxyConsistency');
         const onMismatch = editConsistency ? (editConsistency.value || 'warn') : 'warn';
         p.proxyPolicy = p.proxyPolicy || {};
@@ -1858,7 +1905,7 @@ async function saveEditProfile() {
         console.log('[saveEditProfile] Profile updated successfully');
         closeEditModal(); await loadProfiles();
 
-        const proxyChanged = (before.proxyStr !== p.proxyStr) || (before.proxyEngine !== p.proxyEngine);
+        const proxyChanged = (before.proxyStr !== p.proxyStr) || (before.proxyEngine !== p.proxyEngine) || (before.proxyMode !== p.proxyMode);
         if (wasRunning && proxyChanged) {
             showConfirm('Proxy settings changed. Restart this profile now to apply?', async () => {
                 await stopProfile(p.id);

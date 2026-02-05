@@ -1,6 +1,19 @@
 // preload.js
 const { contextBridge, ipcRenderer } = require('electron');
 
+function assertTrustedUiOrigin() {
+    try {
+        const p = globalThis.location && globalThis.location.protocol;
+        if (p === 'file:') return;
+    } catch (e) { }
+    throw new Error('Untrusted renderer origin');
+}
+
+function invokeTrusted(channel, data) {
+    assertTrustedUiOrigin();
+    return ipcRenderer.invoke(channel, data);
+}
+
 const ALLOWED_INVOKE_CHANNELS = new Set([
     // window theming / app info
     'set-title-bar-color',
@@ -46,36 +59,37 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
 ]);
 
 contextBridge.exposeInMainWorld('electronAPI', {
-    getProfiles: () => ipcRenderer.invoke('get-profiles'),
-    saveProfile: (data) => ipcRenderer.invoke('save-profile', data),
-    updateProfile: (data) => ipcRenderer.invoke('update-profile', data),
-    deleteProfile: (id) => ipcRenderer.invoke('delete-profile', id),
-    launchProfile: (id, watermarkStyle, options = {}) => ipcRenderer.invoke('launch-profile', id, watermarkStyle, options),
-    getSettings: () => ipcRenderer.invoke('get-settings'),
-    saveSettings: (data) => ipcRenderer.invoke('save-settings', data),
-    exportProfile: (id) => ipcRenderer.invoke('export-profile', id),
-    importProfile: () => ipcRenderer.invoke('import-profile'),
+    getProfiles: () => invokeTrusted('get-profiles'),
+    saveProfile: (data) => invokeTrusted('save-profile', data),
+    updateProfile: (data) => invokeTrusted('update-profile', data),
+    deleteProfile: (id) => invokeTrusted('delete-profile', id),
+    launchProfile: (id, watermarkStyle, options = {}) => invokeTrusted('launch-profile', id, watermarkStyle, options),
+    getSettings: () => invokeTrusted('get-settings'),
+    saveSettings: (data) => invokeTrusted('save-settings', data),
+    exportProfile: (id) => invokeTrusted('export-profile', id),
+    importProfile: () => invokeTrusted('import-profile'),
     // 通用 invoke，用于 open-url 等
     invoke: (channel, data) => {
+        assertTrustedUiOrigin();
         if (!ALLOWED_INVOKE_CHANNELS.has(channel)) {
             throw new Error(`IPC channel not allowed: ${channel}`);
         }
         return ipcRenderer.invoke(channel, data);
     },
-    getRunningIds: () => ipcRenderer.invoke('get-running-ids'),
-    runLeakCheck: (id) => ipcRenderer.invoke('run-leak-check', id),
-    openPath: (p) => ipcRenderer.invoke('open-path', p),
-    stopProfile: (id) => ipcRenderer.invoke('stop-profile', id),
-    getProfileLogPath: (id) => ipcRenderer.invoke('get-profile-log-path', id),
-    clearProfileLogs: (id, clearHistory = false) => ipcRenderer.invoke('clear-profile-logs', id, clearHistory),
-    getProfileLogSizes: (id) => ipcRenderer.invoke('get-profile-log-sizes', id),
-    listProfileRotatedLogs: (id) => ipcRenderer.invoke('list-profile-rotated-logs', id),
-    deleteProfileRotatedLog: (id, filename) => ipcRenderer.invoke('delete-profile-rotated-log', id, filename),
-    onProfileStatus: (callback) => ipcRenderer.on('profile-status', (event, data) => callback(data)),
-    onProxyConsistencyWarning: (callback) => ipcRenderer.on('proxy-consistency-warning', (event, data) => callback(data)),
+    getRunningIds: () => invokeTrusted('get-running-ids'),
+    runLeakCheck: (id) => invokeTrusted('run-leak-check', id),
+    openPath: (p) => invokeTrusted('open-path', p),
+    stopProfile: (id) => invokeTrusted('stop-profile', id),
+    getProfileLogPath: (id) => invokeTrusted('get-profile-log-path', id),
+    clearProfileLogs: (id, clearHistory = false) => invokeTrusted('clear-profile-logs', id, clearHistory),
+    getProfileLogSizes: (id) => invokeTrusted('get-profile-log-sizes', id),
+    listProfileRotatedLogs: (id) => invokeTrusted('list-profile-rotated-logs', id),
+    deleteProfileRotatedLog: (id, filename) => invokeTrusted('delete-profile-rotated-log', id, filename),
+    onProfileStatus: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('profile-status', (event, data) => callback(data)); },
+    onProxyConsistencyWarning: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('proxy-consistency-warning', (event, data) => callback(data)); },
     // API events
-    onRefreshProfiles: (callback) => ipcRenderer.on('refresh-profiles', () => callback()),
-    onApiLaunchProfile: (callback) => ipcRenderer.on('api-launch-profile', (event, id) => callback(id)),
-    setSystemProxyMode: (enable, endpoint) => ipcRenderer.invoke('set-system-proxy-mode', { enable, endpoint }),
-    getSystemProxyStatus: () => ipcRenderer.invoke('get-system-proxy-status'),
+    onRefreshProfiles: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('refresh-profiles', () => callback()); },
+    onApiLaunchProfile: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('api-launch-profile', (event, id) => callback(id)); },
+    setSystemProxyMode: (enable, endpoint) => invokeTrusted('set-system-proxy-mode', { enable, endpoint }),
+    getSystemProxyStatus: () => invokeTrusted('get-system-proxy-status'),
 });

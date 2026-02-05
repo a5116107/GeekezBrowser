@@ -757,3 +757,15 @@
 - acceptance:
   - `node scripts/e2e_subscription_parser.js` PASS
   - `node scripts/regression_ipc.js` PASS（包含 `sing-box check`）
+
+### P0-Proxy-11：SOCKS/HTTP 认证解析兼容（base64 / percent-encoding / curl 片段）
+- id: `P0-Proxy-11`
+- status: `DONE`
+- owner: `Codex`
+- scope:
+  - 修复 xray socks outbound 的 user/pass 解析：优先标准 `user:pass@`，仅在无 password 时再尝试 base64(v2rayN)
+  - 对 socks/http/vless/trojan 的 URL userinfo 做 percent-decode，避免凭证包含特殊字符时认证失败
+  - 代理输入 normalize 支持 `scheme://host:port -U user:pass` 这种 URL + 参数混合形式
+- acceptance:
+  - `node scripts/regression_proxy_parser.js` PASS
+  - `npm run regression:all` PASS
