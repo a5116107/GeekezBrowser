@@ -927,6 +927,52 @@ ipcMain.handle('test-proxy-node', async (e, proxyStr) => {
     return await testProxyNodeInternal(proxyStr, 'auto');
 });
 
+const DEBUG_PROXY_TEST = (process.env.GEEKEZ_DEBUG_PROXY_TEST === '1') || (isDev && process.env.GEEKEZ_DEBUG_PROXY_TEST !== '0');
+const DEBUG_PROXY_TEST_KEEP_CONFIG = (process.env.GEEKEZ_DEBUG_PROXY_TEST_KEEP_CONFIG === '1');
+
+function redactProxyForLog(input) {
+    const s = String(input || '').trim();
+    if (!s) return '';
+    if (s.startsWith('sb://')) return `sb://<payload len=${Math.max(0, s.length - 5)}>`;
+    if (s.startsWith('vmess://')) return `vmess://<payload len=${Math.max(0, s.length - 8)}>`;
+
+    // Mask URL userinfo passwords (scheme://user:pass@host:port)
+    try {
+        const u = new URL(s);
+        if (u.username || u.password) {
+            const user = u.username ? (u.username.length > 28 ? `${u.username.slice(0, 6)}…` : u.username) : '';
+            const auth = user ? `${user}:${u.password ? '***' : ''}@` : '***@';
+            return `${u.protocol}//${auth}${u.host}${u.pathname || ''}${u.search || ''}${u.hash || ''}`;
+        }
+    } catch (e) { }
+
+    // Mask non-URL forms like scheme://host:port:user:pass
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s) && !s.includes('@') && s.includes(':')) {
+        const schemeEnd = s.indexOf('://') + 3;
+        const rest = s.slice(schemeEnd);
+        const parts = rest.split(':');
+        if (parts.length >= 4) {
+            const host = parts[0];
+            const port = parts[1];
+            return `${s.slice(0, schemeEnd)}${host}:${port}:***:***`;
+        }
+    }
+
+    return s;
+}
+
+function proxyTestLog(traceId, message, data) {
+    if (!DEBUG_PROXY_TEST) return;
+    const prefix = traceId ? `[proxy-test ${traceId}]` : '[proxy-test]';
+    if (data === undefined) return console.log(prefix, message);
+    try {
+        const payload = typeof data === 'string' ? data : JSON.stringify(data);
+        console.log(prefix, message, payload);
+    } catch (e) {
+        console.log(prefix, message, data);
+    }
+}
+
 function inferProxyTestEngine(proxyStr) {
     const s = String(proxyStr || '').trim().toLowerCase();
     if (s.startsWith('sb://')) return 'sing-box';
@@ -945,18 +991,42 @@ function inferProxyTestEngine(proxyStr) {
     return 'xray';
 }
 
-async function startProxyProcessForTest({ engine, proxyStr, localPort, configPath }) {
+function wireProcessIoToConsole(proc, { traceId, engine }) {
+    if (!DEBUG_PROXY_TEST) return;
+    if (!proc) return;
+    const tag = engine ? String(engine) : 'proc';
+    const pump = (stream, kind) => {
+        if (!stream || typeof stream.on !== 'function') return;
+        let buf = '';
+        stream.on('data', (chunk) => {
+            const text = chunk.toString('utf8');
+            buf += text;
+            const lines = buf.split(/\r?\n/);
+            buf = lines.pop() || '';
+            lines.filter(Boolean).forEach((line) => console.log(`[proxy-test ${traceId} ${tag} ${kind}]`, line));
+        });
+    };
+    pump(proc.stdout, 'stdout');
+    pump(proc.stderr, 'stderr');
+    proc.on('exit', (code, signal) => {
+        console.log(`[proxy-test ${traceId} ${tag}]`, `exit code=${code} signal=${signal || '-'}`);
+    });
+}
+
+async function startProxyProcessForTest({ engine, proxyStr, localPort, configPath, traceId }) {
     if (engine === 'xray') {
         const { parseProxyLink } = require('./utils');
         const outbound = parseProxyLink(proxyStr, "proxy_test");
         const config = {
-            log: { loglevel: "none" },
+            log: { loglevel: DEBUG_PROXY_TEST ? "warning" : "none" },
             inbounds: [{ port: localPort, listen: "127.0.0.1", protocol: "socks", settings: { udp: true } }],
             outbounds: [outbound, { protocol: "freedom", tag: "direct" }],
             routing: { rules: [{ type: "field", outboundTag: "proxy_test", port: "0-65535" }] }
         };
         await fs.writeJson(configPath, config);
-        const xrayProcess = spawn(BIN_PATH, ['-c', configPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: 'ignore', windowsHide: true });
+        const stdio = DEBUG_PROXY_TEST ? ['ignore', 'pipe', 'pipe'] : 'ignore';
+        const xrayProcess = spawn(BIN_PATH, ['-c', configPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio, windowsHide: true });
+        wireProcessIoToConsole(xrayProcess, { traceId, engine: 'xray' });
         return { engine: 'xray', process: xrayProcess };
     }
 
@@ -968,8 +1038,16 @@ async function startProxyProcessForTest({ engine, proxyStr, localPort, configPat
         }
         const spec = normalizeProxySpec(proxyStr);
         const sbConfig = buildSingboxConfigFromProxySpec(spec, localPort);
+        try {
+            if (DEBUG_PROXY_TEST) {
+                sbConfig.log = sbConfig.log && typeof sbConfig.log === 'object' ? sbConfig.log : {};
+                sbConfig.log.level = 'info';
+            }
+        } catch (e) { }
         await fs.writeJson(configPath, sbConfig);
-        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: singboxEnvForConfig(sbConfig), stdio: 'ignore', windowsHide: true });
+        const stdio = DEBUG_PROXY_TEST ? ['ignore', 'pipe', 'pipe'] : 'ignore';
+        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: singboxEnvForConfig(sbConfig), stdio, windowsHide: true });
+        wireProcessIoToConsole(sbProcess, { traceId, engine: 'sing-box' });
         return { engine: 'sing-box', process: sbProcess };
     }
 
@@ -983,20 +1061,36 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto') {
     let proxyProcess = null;
     let lastErr = null;
     const normalizedProxyStr = normalizeProxyInputRaw(proxyStr);
+    const traceId = crypto.createHash('sha1').update(String(normalizedProxyStr || '')).digest('hex').slice(0, 8);
     if (!normalizedProxyStr) {
         return { success: false, ok: false, startedAt, durationMs: Date.now() - startedAt, error: 'Proxy input is empty', code: 'PROXY_TEST_EMPTY' };
     }
     const primary = engineHint && engineHint !== 'auto' ? engineHint : inferProxyTestEngine(normalizedProxyStr);
     const engines = primary === 'sing-box' ? ['sing-box', 'xray'] : ['xray', 'sing-box'];
 
+    proxyTestLog(traceId, 'start', {
+        hint: engineHint,
+        primary,
+        engines,
+        localPort: tempPort,
+        proxy: redactProxyForLog(normalizedProxyStr),
+    });
+
     try {
         for (const engine of engines) {
             try {
-                const started = await startProxyProcessForTest({ engine, proxyStr: normalizedProxyStr, localPort: tempPort, configPath: tempConfigPath });
+                proxyTestLog(traceId, `engine=${engine} start`, { configPath: tempConfigPath });
+                const started = await startProxyProcessForTest({ engine, proxyStr: normalizedProxyStr, localPort: tempPort, configPath: tempConfigPath, traceId });
                 proxyProcess = started && started.process ? started.process : null;
                 const resolvedEngine = started && started.engine ? started.engine : engine;
+                proxyTestLog(traceId, `engine=${resolvedEngine} spawned`, { pid: proxyProcess && proxyProcess.pid ? proxyProcess.pid : null });
 
                 await new Promise(r => setTimeout(r, 800));
+                if (proxyProcess && proxyProcess.exitCode !== null) {
+                    const err = new Error(`Proxy engine exited early (engine=${resolvedEngine}, exitCode=${proxyProcess.exitCode})`);
+                    err.code = 'PROXY_ENGINE_EXITED_EARLY';
+                    throw err;
+                }
 
                 const agent = new SocksProxyAgent(`socks5://127.0.0.1:${tempPort}`);
 
@@ -1010,6 +1104,7 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto') {
                     req.on('error', (err) => resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: err.message }));
                     req.on('timeout', () => { req.destroy(); resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: "Timeout" }); });
                 });
+                proxyTestLog(traceId, `engine=${resolvedEngine} connectivity`, connectivity);
 
                 const { probePublicIp, probeGeo } = require('./proxy/test');
                 let publicIp = null;
@@ -1025,13 +1120,22 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto') {
                 } : null;
 
                 const ok = Boolean(connectivity.ok);
+                proxyTestLog(traceId, `engine=${resolvedEngine} done`, { ok, ip, geo: geoOut || null });
                 return { success: ok, ok, engine: resolvedEngine, startedAt, durationMs: Date.now() - startedAt, connectivity, ip, geo: geoOut };
             } catch (err) {
                 lastErr = err;
+                proxyTestLog(traceId, `engine=${engine} failed`, {
+                    code: err && err.code ? String(err.code) : '',
+                    message: err && err.message ? err.message : String(err),
+                    input: err && err.input ? redactProxyForLog(err.input) : undefined,
+                });
             } finally {
                 try { if (proxyProcess && proxyProcess.pid) await forceKill(proxyProcess.pid); } catch (e) { }
                 proxyProcess = null;
-                try { if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath); } catch (e) { }
+                try {
+                    if (!DEBUG_PROXY_TEST_KEEP_CONFIG && fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath);
+                    else if (DEBUG_PROXY_TEST_KEEP_CONFIG) proxyTestLog(traceId, 'keep config', { path: tempConfigPath });
+                } catch (e) { }
             }
         }
 

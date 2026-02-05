@@ -84,6 +84,11 @@ function main() {
   const httpNorm = expectNormalize(httpWeird, 'http://');
   expectProtocol(httpNorm, 'http');
 
+  // Scheme: host:port:user(with space):pass (provider-style, invalid URL without normalization)
+  const socksHostPortUserSpace = 'socks5://proxy.example.com:1080:user name:pass';
+  const socksHostPortUserSpaceNorm = expectNormalize(socksHostPortUserSpace, 'socks5://');
+  expectSocksAuth(socksHostPortUserSpaceNorm, 'user name', 'pass');
+
   // Percent-encoded auth in URL userinfo should be decoded (http)
   const httpEncoded = 'http://us%3Aer:pa%3Ass@proxy.example.com:8080';
   const httpOut = expectProtocol(httpEncoded, 'http');

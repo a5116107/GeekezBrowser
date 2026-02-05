@@ -128,15 +128,46 @@ function tryNormalizeHostPortUserPassWithScheme(input) {
 
   const rest = stripSurroundingQuotes(m[2]);
   if (!rest) return null;
-  const token = rest.split(/\s+/)[0];
+
+  // NOTE: Some providers embed spaces in the username (e.g. city names), producing invalid URLs like:
+  //   socks5://host:port:user name:pass
+  // So we parse from the raw string (without splitting by whitespace) and then percent-encode.
+  const token = rest;
   if (!token || token.includes('@')) return null;
-  const parts = token.split(':');
-  if (parts.length !== 4) return null;
-  const host = parts[0];
-  const port = Number(parts[1]);
-  const user = parts[2];
-  const pass = parts[3];
+
+  let host = '';
+  let port = null;
+  let remainder = '';
+
+  if (token.startsWith('[')) {
+    const close = token.indexOf(']');
+    if (close < 0) return null;
+    host = token.slice(1, close).trim();
+    const after = token.slice(close + 1);
+    if (!after.startsWith(':')) return null;
+    const nextColon = after.indexOf(':', 1);
+    if (nextColon < 0) return null;
+    const portStr = after.slice(1, nextColon).trim();
+    port = Number(portStr);
+    remainder = after.slice(nextColon + 1);
+  } else {
+    const firstColon = token.indexOf(':');
+    if (firstColon < 1) return null;
+    host = token.slice(0, firstColon).trim();
+    const secondColon = token.indexOf(':', firstColon + 1);
+    if (secondColon < 0) return null;
+    const portStr = token.slice(firstColon + 1, secondColon).trim();
+    port = Number(portStr);
+    remainder = token.slice(secondColon + 1);
+  }
+
   if (!host || !Number.isFinite(port) || port <= 0 || port > 65535) return null;
+  if (!remainder || !remainder.includes(':')) return null;
+
+  const lastColon = remainder.lastIndexOf(':');
+  const user = remainder.slice(0, lastColon).trim();
+  let pass = remainder.slice(lastColon + 1).trim();
+  if (pass) pass = pass.split(/\s+/)[0]; // drop trailing args (curl snippet)
   if (!user) return null;
   const scheme = schemeRaw.startsWith('socks') ? 'socks5' : schemeRaw;
   return `${scheme}://${encodeURIComponent(user)}:${encodeURIComponent(pass || '')}@${formatHostForUri(host)}:${port}`;
@@ -237,6 +268,7 @@ function normalizeProxyInputRaw(input) {
   const raw = typeof input === 'string' ? input : (input == null ? '' : String(input));
   let s = raw.trim();
   if (!s) return '';
+  s = stripSurroundingQuotes(s);
 
   // Canonicalize socks5h:// (DNS via proxy) to socks5://, since downstream only needs proxy transport.
   s = s.replace(/^socks5h:\/\//i, 'socks5://');
