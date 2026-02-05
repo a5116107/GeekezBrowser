@@ -27,6 +27,60 @@ async function main() {
   const { normalizeProxySpec } = require('../proxy/proxySpec');
   const { buildSingboxConfigFromProxySpec } = require('../proxy/singboxConfig');
 
+  const encodeBase64Url = (input) =>
+    Buffer.from(String(input || ''), 'utf8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+
+  const buildSbUri = (payloadObj, name = '') => {
+    const json = JSON.stringify(payloadObj || {});
+    const base = `sb://${encodeBase64Url(json)}`;
+    return name ? `${base}#${encodeURIComponent(name)}` : base;
+  };
+
+  const sbShadowTls = buildSbUri(
+    {
+      kind: 'singbox-outbounds',
+      main: 'proxy',
+      outbounds: [
+        {
+          type: 'shadowsocks',
+          tag: 'proxy',
+          server: '1.2.3.4',
+          server_port: 8388,
+          method: 'aes-256-gcm',
+          password: 'pass',
+          detour: 'shadowtls',
+        },
+        {
+          type: 'shadowtls',
+          tag: 'shadowtls',
+          server: '1.2.3.4',
+          server_port: 8388,
+          version: 3,
+          password: 'shadowpass',
+          tls: { enabled: true, server_name: 'www.bing.com', insecure: true },
+        },
+      ],
+    },
+    'ss-shadowtls'
+  );
+
+  const sbWireguard = buildSbUri(
+    {
+      type: 'wireguard',
+      server: '1.2.3.4',
+      server_port: 51820,
+      local_address: ['10.0.0.2/32'],
+      private_key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+      peer_public_key: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=',
+      mtu: 1420,
+    },
+    'wg'
+  );
+
   const samples = [
     // vless reality grpc
     'vless://11111111-1111-1111-1111-111111111111@example.com:443?security=reality&type=grpc&serviceName=svc&pbk=' +
@@ -38,10 +92,22 @@ async function main() {
     'ss://' + Buffer.from('aes-256-gcm:pass@1.2.3.4:8388').toString('base64'),
     // vmess base64 json
     'vmess://' + Buffer.from(JSON.stringify({ v: '2', ps: 'x', add: 'example.com', port: '443', id: '11111111-1111-1111-1111-111111111111', aid: '0', scy: 'auto', net: 'ws', host: 'example.com', path: '/', tls: 'tls', sni: 'example.com' })).toString('base64'),
+    // ss + v2ray-plugin (SIP003)
+    'ss://' +
+      Buffer.from('aes-256-gcm:pass').toString('base64') +
+      '@1.2.3.4:8388?plugin=' +
+      encodeURIComponent('v2ray-plugin;mode=websocket;host=example.com;path=/;tls') +
+      '#ss-plugin',
+    // shadowtls (as sb:// bundle)
+    sbShadowTls,
     // hysteria2 minimal (with optional params)
     'hysteria2://pass@example.com:443?sni=example.com&insecure=1&alpn=h3&obfs=salamander&obfs-password=obf&upmbps=50&downmbps=100#hy2',
+    // hysteria v1
+    'hysteria://auth@example.com:443?sni=example.com&insecure=1&alpn=h3&protocol=udp&obfs=obfs&ports=443,444&hop=10&upmbps=50&downmbps=100#hy1',
     // tuic minimal
-    'tuic://11111111-1111-1111-1111-111111111111:pass@example.com:443?sni=example.com&insecure=1&alpn=h3#tuic'
+    'tuic://11111111-1111-1111-1111-111111111111:pass@example.com:443?sni=example.com&insecure=1&alpn=h3#tuic',
+    // wireguard (as sb:// payload)
+    sbWireguard,
   ];
 
   const BIN_DIR = path.join(root, 'resources', 'bin', 'win32-x64');
@@ -50,7 +116,7 @@ async function main() {
 
   const checkConfig = (cfgPath) =>
     new Promise((resolve, reject) => {
-      const p = spawn(SING, ['check', '-c', cfgPath], { cwd: BIN_DIR, windowsHide: true });
+      const p = spawn(SING, ['check', '-c', cfgPath], { cwd: BIN_DIR, windowsHide: true, env: { ...process.env, ENABLE_DEPRECATED_WIREGUARD_OUTBOUND: 'true' } });
       let stderr = '';
       p.stderr.on('data', (d) => (stderr += d.toString()));
       p.on('error', reject);

@@ -241,6 +241,18 @@
   - TUN 探测：报告中 `tun.readiness` 提供 readiness code（仅检测资源，不启动驱动）
   - 最小观测：`observations.json` 包含 headers（httpbin）与 ipv6 探测结果（不依赖 Electron UI）
 
+### P2-A-2：TUN 真接入（Windows / sing-box）
+- id: `P2-A-2`
+- status: `TODO`
+- owner: `Codex`
+- scope: 在 Windows 上打通 sing-box TUN（wintun）模式的“可选真接入”：
+  - 生成/启动 tun inbound 配置，支持最小 auto_route/strict_route/dns_hijack 方案
+  - 明确约束：同一时间仅允许一个 profile 进入 tun 模式（避免路由冲突）
+  - 失败提示：权限/驱动/资源缺失时给出可操作的报错与回滚策略
+- acceptance:
+  - 可手动开启/关闭 tun 模式并能恢复网络
+  - LeakCheck 报告中 `proxy.mode="tun"` 且 IPv6/DNS/WebRTC 观测不再出现系统级直连证据
+
 ---
 
 ## UI 体验增强（竞品式）
@@ -731,3 +743,17 @@
 - scope: launch 时将选出的 `preProxyConfig` 实际传入代理引擎；sing-box 支持 preProxy 通过 detour 链接；补齐 vless/trojan `type=h2` 的 sing-box transport 映射；sing-box JSON 导入 http+tls 输出为 https share link
 - acceptance:
   - `npm run regression:all` PASS
+
+### P0-Proxy-10：sing-box 节点类型扩展（wireguard / shadowtls / hysteria(v1) / ss+plugin）
+- id: `P0-Proxy-10`
+- status: `DONE`
+- owner: `Codex`
+- scope: 扩展订阅解析与 sing-box 映射，补齐更多常见节点类型：
+  - Clash YAML：`ss+plugin(v2ray-plugin)`、`shadowtls`、`hysteria(v1)`、`wireguard`
+  - sing-box JSON：识别 `shadowsocks + detour shadowtls`、`shadowsocks plugin`、`hysteria(v1)`、`wireguard`
+  - sing-box config：支持 `hysteria://`、`ss://?plugin=...`、以及 `sb://`（单 outbound 与 bundle）
+  - Proxy Test：对 `sb://` / `hysteria://` / `ss?plugin=` 优先走 sing-box
+  - 兼容性：wireguard outbound 在 sing-box 1.12.x 需要 `ENABLE_DEPRECATED_WIREGUARD_OUTBOUND=true`，启动时自动注入
+- acceptance:
+  - `node scripts/e2e_subscription_parser.js` PASS
+  - `node scripts/regression_ipc.js` PASS（包含 `sing-box check`）

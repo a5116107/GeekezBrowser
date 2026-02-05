@@ -14,6 +14,7 @@ const __lastStatus = new Map();
 const __logSizeCache = new Map(); // id -> { ts:number, total:number }
 let __profileListEventsBound = false;
 let __preProxyListEventsBound = false;
+let __globalActionEventsBound = false;
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (ch) => {
@@ -514,10 +515,181 @@ function submitInputModal() {
     closeInputModal();
 }
 
+function ensureGlobalActionEventsBound() {
+    if (__globalActionEventsBound) return;
+    __globalActionEventsBound = true;
+
+    document.addEventListener('click', (ev) => {
+        try {
+            const actionEl = ev.target && ev.target.closest ? ev.target.closest('[data-action]') : null;
+            if (!actionEl) return;
+            const action = actionEl.getAttribute('data-action');
+            if (!action) return;
+            const actionArg = actionEl.getAttribute('data-action-arg');
+            if (actionEl.tagName === 'A') ev.preventDefault();
+
+            const run = (p) => {
+                try {
+                    if (p && typeof p.then === 'function') {
+                        p.catch((err) => console.error('data-action async failed:', err));
+                    }
+                } catch (e) {
+                    console.error('data-action runner failed:', e);
+                }
+            };
+
+            switch (action) {
+                case 'open-github': run(openGithub()); break;
+                case 'open-help': run(openHelp()); break;
+                case 'open-settings': run(openSettings()); break;
+                case 'check-updates': run(checkUpdates()); break;
+                case 'toggle-lang': run(toggleLang()); break;
+                case 'open-proxy-manager': run(openProxyManager()); break;
+                case 'close-proxy-manager': run(closeProxyManager()); break;
+                case 'open-export-modal': run(openExportModal()); break;
+                case 'close-export-modal': run(closeExportModal()); break;
+                case 'open-export-select-modal': run(openExportSelectModal(actionArg)); break;
+                case 'close-export-select-modal': run(closeExportSelectModal()); break;
+                case 'confirm-export': run(confirmExport()); break;
+                case 'toggle-import-menu': run(toggleImportMenu()); break;
+                case 'import-full-backup': run(importFullBackup()); closeImportMenu(); break;
+                case 'import-data': run(importData()); closeImportMenu(); break;
+                case 'open-add-modal': run(openAddModal()); break;
+                case 'close-add-modal': run(closeAddModal()); break;
+                case 'save-new-profile': run(saveNewProfile()); break;
+                case 'close-edit-modal': run(closeEditModal()); break;
+                case 'save-edit-profile': run(saveEditProfile()); break;
+                case 'toggle-view-mode': run(toggleViewMode()); break;
+                case 'test-current-group': run(testCurrentGroup()); break;
+                case 'rollback-current-group': run(rollbackSubscriptionNodes(currentProxyGroup)); break;
+                case 'edit-current-subscription': run(editCurrentSubscription()); break;
+                case 'open-sub-edit-modal': run(openSubEditModal(actionArg === 'true')); break;
+                case 'save-pre-proxy': run(savePreProxy()); break;
+                case 'reset-proxy-input': run(resetProxyInput()); break;
+                case 'save-proxy-settings': run(saveProxySettings()); break;
+                case 'close-password-modal': run(closePasswordModal()); break;
+                case 'submit-password': run(submitPassword()); break;
+                case 'close-sub-edit-modal': run(closeSubEditModal()); break;
+                case 'delete-subscription': run(deleteSubscription()); break;
+                case 'save-subscription': run(saveSubscription()); break;
+                case 'close-confirm': {
+                    const res = actionArg === 'true' ? true : (actionArg === 'false' ? false : actionArg);
+                    run(closeConfirm(res));
+                    break;
+                }
+                case 'close-alert-modal': {
+                    const m = document.getElementById('alertModal');
+                    if (m) m.style.display = 'none';
+                    break;
+                }
+                case 'close-rotated-logs-modal': run(closeRotatedLogsModal()); break;
+                case 'close-settings': run(closeSettings()); break;
+                case 'switch-settings-tab': run(switchSettingsTab(actionArg, actionEl)); break;
+                case 'select-extension-folder': run(selectExtensionFolder()); break;
+                case 'save-api-port': run(saveApiPort()); break;
+                case 'open-api-docs': run(openApiDocs()); break;
+                case 'copy-api-token': run(copyApiToken()); break;
+                case 'select-data-directory': run(selectDataDirectory()); break;
+                case 'reset-data-directory': run(resetDataDirectory()); break;
+                case 'close-help': run(closeHelp()); break;
+                case 'switch-help-tab': run(switchHelpTab(actionArg)); break;
+                case 'close-input-modal': run(closeInputModal()); break;
+                case 'submit-input-modal': run(submitInputModal()); break;
+                default: return;
+            }
+        } catch (e) {
+            console.error('data-action handler failed:', e);
+        }
+    });
+}
+
+function setViewModeIcon(mode) {
+    const svg = document.getElementById('viewIcon');
+    if (!svg) return;
+    const ns = 'http://www.w3.org/2000/svg';
+    svg.textContent = '';
+
+    if (mode === 'grid') {
+        const p = document.createElementNS(ns, 'path');
+        p.setAttribute('d', 'M3 10h18M3 14h18M3 18h18M3 6h18');
+        p.setAttribute('stroke-width', '2');
+        svg.appendChild(p);
+        return;
+    }
+
+    const rects = [
+        { x: 3, y: 3 },
+        { x: 14, y: 3 },
+        { x: 14, y: 14 },
+        { x: 3, y: 14 }
+    ];
+    rects.forEach(({ x, y }) => {
+        const r = document.createElementNS(ns, 'rect');
+        r.setAttribute('x', String(x));
+        r.setAttribute('y', String(y));
+        r.setAttribute('width', '7');
+        r.setAttribute('height', '7');
+        svg.appendChild(r);
+    });
+}
+
+function renderProfileListEmptyState(listEl, msg) {
+    if (!listEl) return;
+    listEl.textContent = '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'empty-state';
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2');
+
+    const circle = document.createElementNS(ns, 'circle');
+    circle.setAttribute('cx', '12');
+    circle.setAttribute('cy', '7');
+    circle.setAttribute('r', '4');
+
+    svg.appendChild(path);
+    svg.appendChild(circle);
+
+    const text = document.createElement('div');
+    text.className = 'empty-state-text';
+    text.textContent = String(msg ?? '');
+
+    wrap.appendChild(svg);
+    wrap.appendChild(text);
+    listEl.appendChild(wrap);
+}
+
 async function init() {
+    ensureGlobalActionEventsBound();
     const savedTheme = localStorage.getItem('geekez_theme') || 'geek';
     setTheme(savedTheme);
-    document.getElementById('themeSelect').value = savedTheme;
+    const themeSel = document.getElementById('themeSelect');
+    if (themeSel) {
+        themeSel.value = savedTheme;
+        themeSel.addEventListener('change', (ev) => setTheme(ev.target.value));
+    }
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', (ev) => filterProfiles(ev.target.value || ''));
+    }
+    const exportSelectAll = document.getElementById('exportSelectAll');
+    if (exportSelectAll) {
+        exportSelectAll.addEventListener('change', () => toggleExportSelectAll());
+    }
+    const rotatedLogsSearch = document.getElementById('rotatedLogsSearch');
+    if (rotatedLogsSearch) {
+        rotatedLogsSearch.addEventListener('input', () => filterRotatedLogs());
+    }
     setTimeout(() => { const s = document.getElementById('splash'); if (s) { s.style.opacity = '0'; setTimeout(() => s.remove(), 500); } }, 1500);
 
     globalSettings = await window.electronAPI.getSettings();
@@ -706,7 +878,11 @@ function showUpdateConfirm(version, url) {
     const yesBtn = document.getElementById('confirmYes');
     const noBtn = document.getElementById('confirmNo');
 
-    msgEl.innerHTML = `${escapeHtml(t('appUpdateFound'))} (v${escapeHtml(version)})<br><br>${escapeHtml(t('askUpdate'))}?`;
+    msgEl.textContent = '';
+    msgEl.appendChild(document.createTextNode(`${t('appUpdateFound') || 'Update found'} (v${version})`));
+    msgEl.appendChild(document.createElement('br'));
+    msgEl.appendChild(document.createElement('br'));
+    msgEl.appendChild(document.createTextNode(`${t('askUpdate') || 'Update now'}?`));
 
     // Update button - go to download page
     yesBtn.textContent = t('goDownload') || '前往下载';
@@ -815,31 +991,56 @@ async function openRotatedLogsById(profileId) {
         if (!list) return;
         const search = document.getElementById('rotatedLogsSearch');
         if (search) search.value = '';
-        list.innerHTML = '';
+        list.textContent = '';
         if (!res.files || res.files.length === 0) {
-            list.innerHTML = `<div style="opacity:0.7; padding:10px;">${escapeHtml(t('noRotatedLogs') || 'No rotated logs')}</div>`;
+            const empty = document.createElement('div');
+            empty.style.cssText = 'opacity:0.7; padding:10px;';
+            empty.textContent = t('noRotatedLogs') || 'No rotated logs';
+            list.appendChild(empty);
         } else {
             res.files.forEach(f => {
+                const fileName = f.name || '';
                 const item = document.createElement('div');
                 item.className = 'no-drag';
                 item.style.cssText = 'padding:10px; border:1px solid rgba(255,255,255,0.10); border-radius:10px; margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:10px;';
-                item.setAttribute('data-log-name', f.name || '');
-                const fileName = f.name || '';
-                const safeNameText = escapeHtml(fileName);
-                const safeNameAttr = escapeAttr(fileName);
-                item.innerHTML = `<div style="flex:1; cursor:pointer; min-width:0;"><div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${safeNameText}</div><div style="font-size:11px; opacity:0.7;">${formatBytes(f.size || 0)}</div></div><div style="display:flex; gap:8px;"><button class="outline no-drag" style="padding:6px 10px;" data-log-open="${safeNameAttr}">${escapeHtml(t('openLog') || 'Open Log')}</button><button class="outline no-drag" style="padding:6px 10px; border-color:#ef4444; color:#ef4444;" data-log-del="${safeNameAttr}">${escapeHtml(t('delete') || 'Delete')}</button></div>`;
-                item.querySelector('div').onclick = async () => { await window.electronAPI.openPath(f.path); };
-                const openBtn = item.querySelector('button[data-log-open]');
-                if (openBtn) {
-                    openBtn.onclick = async (ev) => { ev.stopPropagation(); await window.electronAPI.openPath(f.path); };
-                }
-                const delBtn = item.querySelector('button[data-log-del]');
-                if (delBtn) {
-                    delBtn.onclick = async (ev) => {
-                        ev.stopPropagation();
-                        await confirmDeleteRotatedLog(f.name);
-                    };
-                }
+                item.setAttribute('data-log-name', fileName);
+
+                const info = document.createElement('div');
+                info.style.cssText = 'flex:1; cursor:pointer; min-width:0;';
+
+                const title = document.createElement('div');
+                title.style.cssText = 'font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+                title.textContent = fileName;
+
+                const sizeEl = document.createElement('div');
+                sizeEl.style.cssText = 'font-size:11px; opacity:0.7;';
+                sizeEl.textContent = formatBytes(f.size || 0);
+
+                info.appendChild(title);
+                info.appendChild(sizeEl);
+
+                info.onclick = async () => { await window.electronAPI.openPath(f.path); };
+
+                const actions = document.createElement('div');
+                actions.style.cssText = 'display:flex; gap:8px;';
+
+                const openBtn = document.createElement('button');
+                openBtn.className = 'outline no-drag';
+                openBtn.style.cssText = 'padding:6px 10px;';
+                openBtn.textContent = t('openLog') || 'Open Log';
+                openBtn.onclick = async (ev) => { ev.stopPropagation(); await window.electronAPI.openPath(f.path); };
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'outline no-drag';
+                delBtn.style.cssText = 'padding:6px 10px; border-color:#ef4444; color:#ef4444;';
+                delBtn.textContent = t('delete') || 'Delete';
+                delBtn.onclick = async (ev) => { ev.stopPropagation(); await confirmDeleteRotatedLog(fileName); };
+
+                actions.appendChild(openBtn);
+                actions.appendChild(delBtn);
+
+                item.appendChild(info);
+                item.appendChild(actions);
                 list.appendChild(item);
             });
             filterRotatedLogs();
@@ -1026,10 +1227,10 @@ async function loadProfiles() {
 
         if (viewMode === 'grid') {
             listEl.classList.add('grid-view');
-            document.getElementById('viewIcon').innerHTML = '<path d="M3 10h18M3 14h18M3 18h18M3 6h18" stroke-width="2"/>';
+            setViewModeIcon(viewMode);
         } else {
             listEl.classList.remove('grid-view');
-            document.getElementById('viewIcon').innerHTML = '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>';
+            setViewModeIcon(viewMode);
         }
 
         listEl.textContent = '';
@@ -1044,7 +1245,7 @@ async function loadProfiles() {
         if (filtered.length === 0) {
             const isSearch = searchText.length > 0;
             const msg = isSearch ? "No Search Results" : t('emptyStateMsg');
-            listEl.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg><div class="empty-state-text">${escapeHtml(msg)}</div></div>`;
+            renderProfileListEmptyState(listEl, msg);
             return;
         }
 
@@ -1678,7 +1879,7 @@ function closeProxyManager() { document.getElementById('proxyModal').style.displ
 function renderGroupTabs() {
     const container = document.getElementById('proxyGroupTabs');
     if (!container) return;
-    container.innerHTML = '';
+    container.textContent = '';
     const manualBtn = document.createElement('div');
     manualBtn.className = `tab-btn no-drag ${currentProxyGroup === 'manual' ? 'active' : ''}`;
     manualBtn.innerText = t('groupManual');
@@ -1699,7 +1900,21 @@ function switchProxyGroup(gid) { currentProxyGroup = gid; renderGroupTabs(); }
 function renderProxyNodes() {
     ensurePreProxyListEventsBound();
     const modeSel = document.getElementById('proxyMode');
-    if (modeSel.options.length === 0) modeSel.innerHTML = `<option value="single">${escapeHtml(t('modeSingle'))}</option><option value="balance">${escapeHtml(t('modeBalance'))}</option><option value="failover">${escapeHtml(t('modeFailover'))}</option>`;
+    if (modeSel.options.length === 0) {
+        modeSel.textContent = '';
+        const optSingle = document.createElement('option');
+        optSingle.value = 'single';
+        optSingle.textContent = t('modeSingle') || 'Single';
+        const optBalance = document.createElement('option');
+        optBalance.value = 'balance';
+        optBalance.textContent = t('modeBalance') || 'Balance';
+        const optFailover = document.createElement('option');
+        optFailover.value = 'failover';
+        optFailover.textContent = t('modeFailover') || 'Failover';
+        modeSel.appendChild(optSingle);
+        modeSel.appendChild(optBalance);
+        modeSel.appendChild(optFailover);
+    }
     modeSel.value = globalSettings.mode || 'single';
     document.getElementById('notifySwitch').checked = globalSettings.notify || false;
 
@@ -1714,9 +1929,9 @@ function renderProxyNodes() {
     const groupName = currentProxyGroup === 'manual' ? t('groupManual') : (globalSettings.subscriptions.find(s => s.id === currentProxyGroup)?.name || 'Sub');
     document.getElementById('currentGroupTitle').innerText = `${groupName} (${list.length})`;
 
-    const btnTest = document.querySelector('button[onclick="testCurrentGroup()"]');
+    const btnTest = document.querySelector('button[data-action="test-current-group"]');
     if (btnTest) btnTest.innerText = t('btnTestGroup');
-    const btnNewSub = document.querySelector('button[onclick="openSubEditModal(true)"]');
+    const btnNewSub = document.querySelector('button[data-action="open-sub-edit-modal"][data-action-arg="true"]');
     if (btnNewSub) btnNewSub.innerText = t('btnImportSub');
     const btnEditSub = document.getElementById('btnEditSub');
     if (btnEditSub) btnEditSub.innerText = t('btnEditSub');
@@ -1901,7 +2116,7 @@ function openSubEditModal(isNew) {
     const labels = modal.querySelectorAll('label'); if (labels[0]) labels[0].innerText = t('subName'); if (labels[1]) labels[1].innerText = t('subUrl'); if (labels[2]) labels[2].innerText = t('subInterval');
     const options = document.getElementById('subInterval').options; options[0].text = t('optDisabled'); options[1].text = t('opt24h'); options[2].text = t('opt72h'); options[3].text = t('optCustom');
     const btnDel = document.getElementById('btnDelSub'); btnDel.innerText = t('btnDelSub'); btnDel.style.display = isNew ? 'none' : 'inline-block';
-    const btnSave = modal.querySelector('button[onclick="saveSubscription()"]'); if (btnSave) btnSave.innerText = t('btnSaveUpdate');
+    const btnSave = modal.querySelector('button[data-action="save-subscription"]'); if (btnSave) btnSave.innerText = t('btnSaveUpdate');
 
     if (isNew) {
         document.getElementById('subId').value = '';
@@ -2567,7 +2782,7 @@ async function importSubscription(url) {
 }
 
 function switchHelpTab(tabName) {
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('#helpModal .tab-btn').forEach(btn => btn.classList.remove('active'));
     const idx = tabName === 'manual' ? 0 : 1;
     const tabs = document.querySelectorAll('#helpModal .tab-btn');
     if (tabs[idx]) tabs[idx].classList.add('active');
@@ -2926,12 +3141,13 @@ async function copyApiToken() {
     }
 }
 
-function switchSettingsTab(tabName) {
+function switchSettingsTab(tabName, clickedEl) {
     // Update tab buttons
     document.querySelectorAll('#settingsModal .tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    event.target.classList.add('active');
+    const target = clickedEl || (typeof event !== 'undefined' ? event.target : null);
+    if (target && target.classList) target.classList.add('active');
 
     // Update tab content
     document.querySelectorAll('.settings-section').forEach(section => {
@@ -2956,11 +3172,15 @@ async function loadUserExtensions() {
     if (!list) return;
 
     if (exts.length === 0) {
-        list.innerHTML = `<div style="opacity:0.5; text-align:center; padding:20px;">${escapeHtml(t('settingsExtNoExt'))}</div>`;
+        list.textContent = '';
+        const empty = document.createElement('div');
+        empty.style.cssText = 'opacity:0.5; text-align:center; padding:20px;';
+        empty.textContent = t('settingsExtNoExt') || '';
+        list.appendChild(empty);
         return;
     }
 
-    list.innerHTML = '';
+    list.textContent = '';
     exts.forEach((ext) => {
         const extPath = String(ext ?? '');
         const name = extPath.split(/[\\/]/).pop() || extPath;

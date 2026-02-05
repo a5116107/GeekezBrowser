@@ -261,6 +261,7 @@ function extractZip(zipPath, destDir, options = {}) {
         const name = rawName.replace(/\\/g, '/');
 
         if (!name || name === '.') continue;
+        if (name.includes('\0')) throw new Error(`Zip-Slip blocked: null byte entry (${rawName})`);
         if (name.startsWith('/') || name.startsWith('\\') || /^[a-zA-Z]:/.test(name)) {
           throw new Error(`Zip-Slip blocked: absolute path entry (${rawName})`);
         }
@@ -271,6 +272,9 @@ function extractZip(zipPath, destDir, options = {}) {
         }
 
         const isDir = !!entry.isDirectory || name.endsWith('/');
+        if (!isDir && targetPath === destRoot) {
+          throw new Error(`Zip-Slip blocked: invalid root file entry (${rawName})`);
+        }
         if (isDir) {
           try {
             fs.ensureDirSync(targetPath);

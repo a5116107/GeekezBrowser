@@ -10,6 +10,29 @@ function safeTrim(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function encodeBase64Url(input) {
+  const b64 = Buffer.from(String(input || ''), 'utf8').toString('base64');
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function buildSbUri(payloadObj, name = '') {
+  const json = JSON.stringify(payloadObj || {});
+  const base = `sb://${encodeBase64Url(json)}`;
+  return name ? `${base}#${encodeURIComponent(name)}` : base;
+}
+
+function bytesFromMaybeBase64(str) {
+  const s = safeTrim(str);
+  if (!s) return null;
+  try {
+    const buf = Buffer.from(s, 'base64');
+    if (!buf || buf.length === 0) return null;
+    return Array.from(buf.values());
+  } catch {
+    return null;
+  }
+}
+
 function formatHostForUri(host) {
   const h = safeTrim(host);
   if (!h) return '';
@@ -36,11 +59,12 @@ function buildUrlWithUserInfo({ scheme, username, password, host, port, params =
   return u.toString();
 }
 
-function buildSsUri({ method, password, host, port, name }) {
+function buildSsUri({ method, password, host, port, name, plugin }) {
   const h = formatHostForUri(host);
   if (!method || !password || !h || !port) return null;
   const userInfo = Buffer.from(`${method}:${password}`, 'utf8').toString('base64');
-  const base = `ss://${userInfo}@${h}:${port}`;
+  const pluginStr = safeTrim(plugin);
+  const base = pluginStr ? `ss://${userInfo}@${h}:${port}?plugin=${encodeURIComponent(pluginStr)}` : `ss://${userInfo}@${h}:${port}`;
   return name ? `${base}#${encodeURIComponent(name)}` : base;
 }
 
@@ -207,8 +231,95 @@ function parseClashYaml(content) {
         const method = safeTrim(p.cipher);
         const password = safeTrim(p.password);
         if (!host || !port || !method || !password) continue;
-        // Skip plugin variants for now (requires additional mapping support).
-        if (p.plugin || p['plugin-opts']) continue;
+
+        const pluginName = safeTrim(p.plugin);
+        const pluginOpts = p['plugin-opts'] || p.pluginOpts || null;
+
+        // Plugin variants (SIP003) where possible.
+        if (pluginName) {
+          const pn = pluginName.toLowerCase();
+
+          // v2ray-plugin (websocket): v2ray-plugin;mode=websocket;host=...;path=/;tls
+          if (pn === 'v2ray-plugin') {
+            const parts = ['v2ray-plugin'];
+            const mode = safeTrim(pluginOpts && pluginOpts.mode);
+            const hostOpt = safeTrim(pluginOpts && pluginOpts.host);
+            const pathOpt = safeTrim(pluginOpts && pluginOpts.path);
+            if (mode) parts.push(`mode=${mode}`);
+            if (hostOpt) parts.push(`host=${hostOpt}`);
+            if (pathOpt) parts.push(`path=${pathOpt}`);
+            if (pluginOpts && pluginOpts.tls === true) parts.push('tls');
+            const plugin = parts.join(';');
+            const raw = buildSsUri({ method, password, host, port, name, plugin });
+            if (!raw) continue;
+            nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name });
+            idx++;
+            continue;
+          }
+
+          // simple-obfs: obfs-local;obfs=tls/http;obfs-host=...
+          if (pn === 'obfs' || pn === 'obfs-local') {
+            const mode = safeTrim(pluginOpts && (pluginOpts.mode || pluginOpts.obfs));
+            const hostOpt = safeTrim(pluginOpts && pluginOpts.host);
+            const parts = ['obfs-local'];
+            if (mode) parts.push(`obfs=${mode}`);
+            if (hostOpt) parts.push(`obfs-host=${hostOpt}`);
+            const plugin = parts.join(';');
+            const raw = buildSsUri({ method, password, host, port, name, plugin });
+            if (!raw) continue;
+            nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name });
+            idx++;
+            continue;
+          }
+
+          // shadow-tls: map to sing-box bundle (shadowsocks detour -> shadowtls outbound)
+          if (pn === 'shadow-tls' || pn === 'shadowtls' || pn === 'shadow_tls') {
+            const stHost = safeTrim(pluginOpts && (pluginOpts.host || pluginOpts.sni)) || 'www.bing.com';
+            const stPassword = safeTrim(pluginOpts && (pluginOpts.password || pluginOpts.pass));
+            const stVersion = Number(pluginOpts && (pluginOpts.version || pluginOpts.v || 3)) || 3;
+            const stFp = safeTrim(p['client-fingerprint'] || p.clientFingerprint) || undefined;
+            if (!stPassword) continue;
+
+            const bundle = {
+              kind: 'singbox-outbounds',
+              main: 'proxy',
+              outbounds: [
+                {
+                  type: 'shadowsocks',
+                  tag: 'proxy',
+                  server: host,
+                  server_port: Number(port),
+                  method,
+                  password,
+                  detour: 'shadowtls',
+                },
+                {
+                  type: 'shadowtls',
+                  tag: 'shadowtls',
+                  server: host,
+                  server_port: Number(port),
+                  version: stVersion,
+                  password: stPassword,
+                  tls: {
+                    enabled: true,
+                    server_name: stHost,
+                    insecure: true,
+                    utls: stFp ? { enabled: true, fingerprint: stFp } : undefined,
+                  },
+                }
+              ]
+            };
+
+            const raw = buildSbUri(bundle, name);
+            nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name });
+            idx++;
+            continue;
+          }
+
+          // Unknown plugin (skip).
+          continue;
+        }
+
         const raw = buildSsUri({ method, password, host, port, name });
         if (!raw) continue;
         nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name });
@@ -331,6 +442,90 @@ function parseClashYaml(content) {
         continue;
       }
 
+      // hysteria v1 (sing-box preferred): hysteria://auth@host:port?...#name
+      if (type === 'hysteria') {
+        const host = safeTrim(p.server);
+        const port = p.port;
+        const auth = safeTrim(p['auth-str'] || p.auth || p.password);
+        if (!host || !port || !auth) continue;
+
+        const sni = safeTrim(p.sni || p.servername || p.peer);
+        const protocol = safeTrim(p.protocol);
+        const up = Number(p.up);
+        const down = Number(p.down);
+        const alpn = Array.isArray(p.alpn) ? p.alpn.join(',') : safeTrim(p.alpn);
+        const obfs = safeTrim(p.obfs);
+        const ports = safeTrim(p.ports);
+        const hop = Number(p['hop-interval'] || p.hopInterval);
+
+        const params = {
+          sni: sni || undefined,
+          insecure: (p['skip-cert-verify'] === true) ? '1' : undefined,
+          alpn: alpn || undefined,
+          protocol: protocol || undefined,
+          obfs: obfs || undefined,
+          ports: ports || undefined,
+          hop: Number.isFinite(hop) && hop > 0 ? String(hop) : undefined,
+          upmbps: Number.isFinite(up) && up > 0 ? String(up) : undefined,
+          downmbps: Number.isFinite(down) && down > 0 ? String(down) : undefined,
+        };
+
+        const raw = buildUrlWithUserInfo({
+          scheme: 'hysteria',
+          username: auth,
+          host,
+          port,
+          params,
+          name
+        });
+        if (!raw) continue;
+        nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name });
+        idx++;
+        continue;
+      }
+
+      // wireguard (sing-box preferred): encode as sb:// payload (no standard share link)
+      if (type === 'wireguard' || type === 'wg') {
+        const host = safeTrim(p.server);
+        const port = p.port;
+        const privateKey = safeTrim(p['private-key'] || p.privateKey);
+        const peerPublicKey = safeTrim(p['public-key'] || p.publicKey);
+        const psk = safeTrim(p['pre-shared-key'] || p.preSharedKey);
+        const ip4 = safeTrim(p.ip);
+        const ip6 = safeTrim(p.ipv6);
+        if (!host || !port || !privateKey || !peerPublicKey || (!ip4 && !ip6)) continue;
+
+        const local_address = [];
+        if (ip4) local_address.push(ip4.includes('/') ? ip4 : `${ip4}/32`);
+        if (ip6) local_address.push(ip6.includes('/') ? ip6 : `${ip6}/128`);
+
+        let reserved = null;
+        if (Array.isArray(p.reserved)) {
+          const nums = p.reserved.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n >= 0 && n <= 255);
+          if (nums.length >= 3) reserved = nums.slice(0, 3);
+        } else if (typeof p.reserved === 'string') {
+          const bytes = bytesFromMaybeBase64(p.reserved);
+          if (bytes && bytes.length >= 3) reserved = bytes.slice(0, 3);
+        }
+
+        const outbound = {
+          type: 'wireguard',
+          server: host,
+          server_port: Number(port),
+          local_address,
+          private_key: privateKey,
+          peer_public_key: peerPublicKey,
+          pre_shared_key: psk || undefined,
+          reserved: reserved || undefined,
+          mtu: Number(p.mtu) || undefined,
+        };
+
+        const raw = buildSbUri(outbound, name);
+        nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name });
+        idx++;
+        continue;
+      }
+
       // hysteria2://password@host:port?...#name (sing-box preferred)
       if (type === 'hysteria2' || type === 'hy2') {
         const host = safeTrim(p.server);
@@ -404,11 +599,19 @@ function parseSingboxJson(content) {
   try {
     const obj = JSON.parse(String(content || ''));
     const outbounds = obj && Array.isArray(obj.outbounds) ? obj.outbounds : [];
+    const byTag = new Map();
+    outbounds.forEach((o) => {
+      if (!o || typeof o !== 'object') return;
+      const t = safeTrim(o.tag);
+      if (t) byTag.set(t, o);
+    });
+    const consumed = new Set();
     let idx = 0;
     for (const o of outbounds) {
       if (!o || typeof o !== 'object') continue;
       const type = String(o.type || '').toLowerCase();
       const tag = safeTrim(o.tag) || `sb-${idx + 1}`;
+      if (consumed.has(tag)) continue;
 
       // socks: socks5://user:pass@host:port
       if (type === 'socks' || type === 'socks5') {
@@ -490,9 +693,128 @@ function parseSingboxJson(content) {
         const method = safeTrim(o.method);
         const password = safeTrim(o.password);
         if (!host || !port || !method || !password) continue;
-        if (o.plugin) continue;
+
+        // shadowsocks + detour shadowtls (preferred form for ShadowTLS nodes)
+        const detourTag = safeTrim(o.detour);
+        const detourOutbound = detourTag ? byTag.get(detourTag) : null;
+        const detourType = detourOutbound ? String(detourOutbound.type || '').toLowerCase() : '';
+        if (detourOutbound && detourType === 'shadowtls') {
+          const stHost = safeTrim(detourOutbound.server);
+          const stPort = detourOutbound.server_port;
+          const stVersion = Number(detourOutbound.version) || 3;
+          const stPassword = safeTrim(detourOutbound.password);
+          const tls = detourOutbound.tls && typeof detourOutbound.tls === 'object' ? detourOutbound.tls : null;
+
+          if (stHost && stPort && stPassword) {
+            const bundle = {
+              kind: 'singbox-outbounds',
+              main: 'proxy',
+              outbounds: [
+                {
+                  type: 'shadowsocks',
+                  tag: 'proxy',
+                  server: host,
+                  server_port: Number(port),
+                  method,
+                  password,
+                  detour: 'shadowtls',
+                },
+                {
+                  type: 'shadowtls',
+                  tag: 'shadowtls',
+                  server: stHost,
+                  server_port: Number(stPort),
+                  version: stVersion,
+                  password: stPassword,
+                  tls: tls || { enabled: true },
+                }
+              ]
+            };
+
+            const raw = buildSbUri(bundle, tag);
+            nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name: tag });
+            consumed.add(detourTag);
+            idx++;
+            continue;
+          }
+        }
+
+        // plugin (SIP003): plugin + plugin_opts
+        const pluginName = safeTrim(o.plugin);
+        const pluginOpts = safeTrim(o.plugin_opts || o.pluginOpts);
+        if (pluginName) {
+          const plugin = pluginOpts ? `${pluginName};${pluginOpts}` : pluginName;
+          const raw = buildSsUri({ method, password, host, port, name: tag, plugin });
+          if (!raw) continue;
+          nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name: tag });
+          idx++;
+          continue;
+        }
+
         const raw = buildSsUri({ method, password, host, port, name: tag });
         if (!raw) continue;
+        nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name: tag });
+        idx++;
+        continue;
+      }
+
+      // hysteria v1 (sing-box preferred): hysteria://auth@host:port?...#tag
+      if (type === 'hysteria') {
+        const host = safeTrim(o.server);
+        const port = o.server_port;
+        const auth = safeTrim(o.auth_str || o.auth);
+        if (!host || !port || !auth) continue;
+
+        const tls = o.tls && typeof o.tls === 'object' ? o.tls : null;
+        const params = {
+          sni: safeTrim(tls && tls.server_name) || undefined,
+          insecure: (tls && tls.insecure) ? '1' : undefined,
+          alpn: Array.isArray(tls && tls.alpn) ? tls.alpn.join(',') : (safeTrim(tls && tls.alpn) || undefined),
+          obfs: safeTrim(o.obfs) || undefined,
+          ports: Array.isArray(o.server_ports) ? o.server_ports.join(',') : (safeTrim(o.server_ports) || undefined),
+          hop: (typeof o.hop_interval === 'number' && Number.isFinite(o.hop_interval))
+            ? String(o.hop_interval)
+            : (safeTrim(o.hop_interval) || undefined),
+          upmbps: Number.isFinite(Number(o.up_mbps)) ? String(Number(o.up_mbps)) : undefined,
+          downmbps: Number.isFinite(Number(o.down_mbps)) ? String(Number(o.down_mbps)) : undefined,
+        };
+
+        const raw = buildUrlWithUserInfo({
+          scheme: 'hysteria',
+          username: auth,
+          host,
+          port,
+          params,
+          name: tag
+        });
+        if (!raw) continue;
+        nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name: tag });
+        idx++;
+        continue;
+      }
+
+      // wireguard (deprecated in sing-box 1.11+, still present in 1.12.x): encode as sb:// payload
+      if (type === 'wireguard') {
+        const host = safeTrim(o.server);
+        const port = o.server_port;
+        const privateKey = safeTrim(o.private_key);
+        const peerPublicKey = safeTrim(o.peer_public_key);
+        const localAddress = Array.isArray(o.local_address) ? o.local_address : null;
+        if (!host || !port || !privateKey || !peerPublicKey || !localAddress || localAddress.length === 0) continue;
+
+        const outbound = {
+          type: 'wireguard',
+          server: host,
+          server_port: Number(port),
+          local_address: localAddress,
+          private_key: privateKey,
+          peer_public_key: peerPublicKey,
+          pre_shared_key: safeTrim(o.pre_shared_key) || undefined,
+          reserved: Array.isArray(o.reserved) ? o.reserved : undefined,
+          mtu: Number(o.mtu) || undefined,
+        };
+
+        const raw = buildSbUri(outbound, tag);
         nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name: tag });
         idx++;
         continue;

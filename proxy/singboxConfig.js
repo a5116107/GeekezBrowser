@@ -41,6 +41,63 @@ function stripIpv6Brackets(host) {
   return h;
 }
 
+function decodeBase64UrlToUtf8(b64url) {
+  const s = String(b64url || '').trim();
+  if (!s) return '';
+  const base64 = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = base64.length % 4;
+  const padded = base64 + (pad ? '='.repeat(4 - pad) : '');
+  return Buffer.from(padded, 'base64').toString('utf8');
+}
+
+function decodeSbPayload(raw) {
+  const input = String(raw || '').trim();
+  if (!input.startsWith('sb://')) return null;
+  let clean = input.slice('sb://'.length);
+  if (clean.includes('#')) clean = clean.split('#')[0];
+  // We intentionally ignore querystrings to keep the payload canonical.
+  if (clean.includes('?')) clean = clean.split('?')[0];
+  if (!clean) return null;
+  try {
+    const jsonStr = decodeBase64UrlToUtf8(clean);
+    const obj = JSON.parse(jsonStr);
+    return obj && typeof obj === 'object' ? obj : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function applyPreProxyDetourToTail({ outbounds, mainTag, preTag }) {
+  if (!Array.isArray(outbounds) || outbounds.length === 0) return;
+  const start = String(mainTag || '').trim() || 'proxy';
+  const pre = String(preTag || '').trim() || 'pre';
+  const byTag = new Map();
+  outbounds.forEach((o) => {
+    if (o && typeof o === 'object' && isNonEmptyString(o.tag)) byTag.set(String(o.tag), o);
+  });
+
+  let current = byTag.get(start);
+  if (!current) return;
+
+  const visited = new Set();
+  for (let i = 0; i < 16; i++) {
+    if (!current || typeof current !== 'object') return;
+    const tag = String(current.tag || '');
+    if (visited.has(tag)) return;
+    visited.add(tag);
+
+    const detour = current.detour ? String(current.detour) : '';
+    if (!detour) break;
+    const next = byTag.get(detour);
+    if (!next) break;
+    current = next;
+  }
+
+  if (current && typeof current === 'object') {
+    current.detour = pre;
+  }
+}
+
 function buildSingboxOutboundFromProxySpec(spec, tag = 'proxy') {
   if (!spec || typeof spec !== 'object') throw new Error('Invalid ProxySpec');
   const raw = String(spec.raw || '').trim();
@@ -48,6 +105,18 @@ function buildSingboxOutboundFromProxySpec(spec, tag = 'proxy') {
 
   const protocol = spec.protocol || 'unknown';
   const outTag = isNonEmptyString(tag) ? tag : 'proxy';
+
+  if (raw.startsWith('sb://')) {
+    const decoded = decodeSbPayload(raw);
+    if (!decoded) throw Object.assign(new Error('Invalid sb:// payload'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+    // Bundles are handled in buildSingboxConfigFromProxySpec (need route wiring).
+    if (decoded.kind && Array.isArray(decoded.outbounds)) {
+      throw Object.assign(new Error('sb:// bundle payload must be handled at config level'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+    }
+    if (!decoded.type) throw Object.assign(new Error('Invalid sb:// outbound (missing type)'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+    if (typeof decoded !== 'object') throw Object.assign(new Error('Invalid sb:// outbound'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+    return { ...decoded, tag: outTag };
+  }
 
   if (raw.startsWith('socks5://') || raw.startsWith('socks://')) {
     const o = parseHttpOrSocksUrl(raw);
@@ -188,6 +257,89 @@ function buildSingboxOutboundFromProxySpec(spec, tag = 'proxy') {
     return outbound;
   }
 
+  if (raw.startsWith('hysteria://')) {
+    const u = new URL(raw);
+    const params = u.searchParams;
+    const auth = safeDecodeUrlComponent(u.username) ||
+      safeDecodeUrlComponent(params.get('auth') || '') ||
+      safeDecodeUrlComponent(params.get('auth-str') || '') ||
+      safeDecodeUrlComponent(params.get('auth_str') || '') ||
+      safeDecodeUrlComponent(params.get('password') || '') ||
+      '';
+    if (!auth) throw Object.assign(new Error('Invalid hysteria auth'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+
+    const sni = params.get('sni') || params.get('peer') || u.hostname;
+    const insecureParam = parseBooleanLoose(params.get('insecure'));
+    const insecure = insecureParam === null ? true : insecureParam;
+
+    const outbound = {
+      type: 'hysteria',
+      tag: outTag,
+      server: u.hostname,
+      server_port: u.port ? Number(u.port) : 443,
+      auth_str: auth,
+      up_mbps: undefined,
+      down_mbps: undefined,
+      obfs: undefined,
+      server_ports: undefined,
+      hop_interval: undefined,
+      tls: {
+        enabled: true,
+        server_name: sni,
+        insecure,
+      },
+    };
+
+    const up = Number(params.get('upmbps'));
+    const down = Number(params.get('downmbps'));
+    if (Number.isFinite(up) && up > 0) outbound.up_mbps = up;
+    if (Number.isFinite(down) && down > 0) outbound.down_mbps = down;
+
+    const alpnRaw = params.get('alpn');
+    if (alpnRaw) {
+      const alpn = String(alpnRaw).split(',').map(s => s.trim()).filter(Boolean);
+      if (alpn.length > 0) outbound.tls.alpn = alpn;
+    }
+
+    const obfs = params.get('obfs');
+    if (obfs) outbound.obfs = String(obfs);
+
+    const portsRaw = params.get('ports');
+    if (portsRaw) {
+      const portsStr = String(portsRaw).trim();
+      if (portsStr) {
+        let normalized = '';
+        if (portsStr.includes(':')) {
+          normalized = portsStr;
+        } else if (portsStr.includes('-')) {
+          const [a, b] = portsStr.split('-', 2).map(s => s.trim());
+          if (a && b) normalized = `${a}:${b}`;
+        } else if (portsStr.includes(',')) {
+          const nums = portsStr
+            .split(',')
+            .map(s => Number(String(s).trim()))
+            .filter(n => Number.isFinite(n) && n >= 1 && n <= 65535);
+          if (nums.length >= 2) normalized = `${nums[0]}:${nums[nums.length - 1]}`;
+          else if (nums.length === 1) normalized = `${nums[0]}:${nums[0]}`;
+        } else {
+          const n = Number(portsStr);
+          if (Number.isFinite(n) && n >= 1 && n <= 65535) normalized = `${n}:${n}`;
+        }
+        if (normalized) outbound.server_ports = normalized;
+      }
+    }
+
+    const hopRaw = params.get('hop');
+    if (hopRaw) {
+      const hopStr = String(hopRaw).trim();
+      const hop = Number(hopStr);
+      if (Number.isFinite(hop) && hop > 0) outbound.hop_interval = `${hop}s`;
+      else outbound.hop_interval = hopStr;
+    }
+
+    return outbound;
+  }
+
   if (raw.startsWith('hysteria2://') || raw.startsWith('hy2://')) {
     const u = new URL(raw);
     const params = u.searchParams;
@@ -280,8 +432,19 @@ function buildSingboxOutboundFromProxySpec(spec, tag = 'proxy') {
     let clean = raw.replace('ss://', '');
     if (clean.includes('#')) clean = clean.split('#')[0];
 
-    // Remove optional plugin parameters after ?
-    if (clean.includes('?')) clean = clean.split('?')[0];
+    // Optional SIP003 plugin parameter (?plugin=...)
+    let pluginParam = '';
+    const qIndex = clean.indexOf('?');
+    if (qIndex >= 0) {
+      const beforeQ = clean.slice(0, qIndex);
+      const query = clean.slice(qIndex + 1);
+      clean = beforeQ;
+      try {
+        const sp = new URLSearchParams(query);
+        const got = sp.get('plugin');
+        pluginParam = typeof got === 'string' ? got.trim() : '';
+      } catch (e) { }
+    }
 
     const parseUserInfo = (userInfo) => {
       if (!userInfo) return null;
@@ -328,7 +491,7 @@ function buildSingboxOutboundFromProxySpec(spec, tag = 'proxy') {
       port = Number(hostPart.substring(lastColonIndex + 1));
     }
 
-    return {
+    const outbound = {
       type: 'shadowsocks',
       tag: outTag,
       server: host,
@@ -336,6 +499,16 @@ function buildSingboxOutboundFromProxySpec(spec, tag = 'proxy') {
       method,
       password,
     };
+
+    if (pluginParam) {
+      const parts = String(pluginParam).split(';').map(s => s.trim()).filter(Boolean);
+      const plugin = parts.length > 0 ? parts.shift() : '';
+      const plugin_opts = parts.length > 0 ? parts.join(';') : '';
+      if (plugin) outbound.plugin = plugin;
+      if (plugin_opts) outbound.plugin_opts = plugin_opts;
+    }
+
+    return outbound;
   }
 
   if (raw.startsWith('vmess://')) {
@@ -437,13 +610,42 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort, options = {}) {
     },
   };
 
-  const mainOutbound = buildSingboxOutboundFromProxySpec(spec, 'proxy');
   const preSpec = opts && opts.preProxySpec && typeof opts.preProxySpec === 'object' ? opts.preProxySpec : null;
+  const raw = String(spec.raw || '').trim();
+
+  // sb:// can embed one outbound OR a small bundle of outbounds (e.g. shadowsocks+shadowtls).
+  if (raw.startsWith('sb://')) {
+    const bundle = decodeSbPayload(raw);
+    if (bundle && bundle.kind && Array.isArray(bundle.outbounds)) {
+      const mainTag = isNonEmptyString(bundle.main) ? String(bundle.main) : 'proxy';
+      const outbounds = bundle.outbounds
+        .filter((o) => o && typeof o === 'object')
+        .map((o, idx) => {
+          const tag = isNonEmptyString(o.tag) ? String(o.tag) : (idx === 0 ? mainTag : `sb-${idx + 1}`);
+          return { ...o, tag };
+        });
+
+      config.outbounds = outbounds;
+      config.route.rules = [{ inbound: ['in-socks'], outbound: mainTag }];
+      config.route.final = mainTag;
+
+      if (preSpec) {
+        const preOutbound = buildSingboxOutboundFromProxySpec(preSpec, 'pre');
+        config.outbounds.unshift(preOutbound);
+        applyPreProxyDetourToTail({ outbounds: config.outbounds, mainTag, preTag: 'pre' });
+      }
+
+      return config;
+    }
+    // Single-outbound payload is handled below by buildSingboxOutboundFromProxySpec.
+  }
+
+  const mainOutbound = buildSingboxOutboundFromProxySpec(spec, 'proxy');
 
   if (preSpec) {
     const preOutbound = buildSingboxOutboundFromProxySpec(preSpec, 'pre');
     // sing-box outbound chaining uses "detour"
-    mainOutbound.detour = 'pre';
+    applyPreProxyDetourToTail({ outbounds: [mainOutbound], mainTag: 'proxy', preTag: 'pre' });
     config.outbounds.push(preOutbound, mainOutbound);
     return config;
   }

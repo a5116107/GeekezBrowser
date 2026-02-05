@@ -963,6 +963,14 @@
         .timezone-item.hidden {
             display: none;
         }
+
+        .import-menu-item:hover {
+            background: rgba(128, 128, 128, 0.1);
+        }
+
+        .hover-bg:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
     </style>
 </head>
 
@@ -993,23 +1001,23 @@
             <div class="logo-text">eek<span class="highlight">EZ</span><span class="ver" id="app-version"></span></div>
         </div>
         <div class="top-actions">
-            <select class="theme-select" onchange="setTheme(this.value)" id="themeSelect">
+            <select class="theme-select" id="themeSelect">
                 <option value="geek">Geek</option>
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
             </select>
-            <div class="icon-btn" onclick="openGithub()" title="Github"><svg viewBox="0 0 24 24" width="20" height="20"
+            <div class="icon-btn" data-action="open-github" title="Github"><svg viewBox="0 0 24 24" width="20" height="20"
                     fill="currentColor">
                     <path
                         d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
                 </svg></div>
-            <div class="icon-btn" onclick="openHelp()" title="Help"><svg viewBox="0 0 24 24" width="20" height="20"
+            <div class="icon-btn" data-action="open-help" title="Help"><svg viewBox="0 0 24 24" width="20" height="20"
                     fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"></circle>
                     <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
                     <circle cx="12" cy="17" r="0.5" fill="currentColor"></circle>
                 </svg></div>
-            <div class="icon-btn" onclick="openSettings()" title="Settings"><svg viewBox="0 0 24 24" width="20"
+            <div class="icon-btn" data-action="open-settings" title="Settings"><svg viewBox="0 0 24 24" width="20"
                     height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                     stroke-linejoin="round">
                     <path
@@ -1017,14 +1025,14 @@
                     </path>
                     <circle cx="12" cy="12" r="3"></circle>
                 </svg></div>
-            <div class="icon-btn" onclick="checkUpdates()" title="Check Updates" id="btnUpdate"><svg viewBox="0 0 24 24"
+            <div class="icon-btn" data-action="check-updates" title="Check Updates" id="btnUpdate"><svg viewBox="0 0 24 24"
                     width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                     stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"></circle>
                     <path d="M16 12l-4-4-4 4"></path>
                     <path d="M12 16V8"></path>
                 </svg></div>
-            <div class="lang-btn" onclick="toggleLang()">CN/EN</div>
+            <div class="lang-btn" data-action="toggle-lang">CN/EN</div>
         </div>
     </div>
 
@@ -1034,25 +1042,21 @@
                     type="checkbox" id="enablePreProxy" style="width:auto; margin:0;"> <span
                     data-i18n="enablePreProxy">Chain Proxy</span></label>
             <span id="currentProxyDisplay" class="status-badge">OFF</span>
-            <button class="outline" onclick="openProxyManager()" data-i18n="manageChain">⚙️ Proxy Chain</button>
+            <button class="outline" data-action="open-proxy-manager" data-i18n="manageChain">⚙️ Proxy Chain</button>
         </div>
         <div style="display:flex; gap:10px;">
-            <button class="outline" onclick="openExportModal()" data-i18n="btnExport">📤 Export</button>
+            <button class="outline" data-action="open-export-modal" data-i18n="btnExport">📤 Export</button>
             <div style="position: relative;">
-                <button class="outline" onclick="toggleImportMenu()" id="importBtn" data-i18n="importYaml">📥 Import
+                <button class="outline" data-action="toggle-import-menu" id="importBtn" data-i18n="importYaml">📥 Import
                     ▾</button>
                 <div id="importMenu"
                     style="display: none; position: absolute; top: 35px; right: 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; min-width: 200px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
-                    <div onclick="importFullBackup(); closeImportMenu();"
-                        style="padding: 10px 15px; cursor: pointer; font-size: 13px;"
-                        onmouseover="this.style.background='rgba(128,128,128,0.1)'"
-                        onmouseout="this.style.background='transparent'">
+                    <div class="import-menu-item" data-action="import-full-backup"
+                        style="padding: 10px 15px; cursor: pointer; font-size: 13px;">
                         🔐 导入完整备份 (.geekez)
                     </div>
-                    <div onclick="importData(); closeImportMenu();"
-                        style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px;"
-                        onmouseover="this.style.background='rgba(128,128,128,0.1)'"
-                        onmouseout="this.style.background='transparent'">
+                    <div class="import-menu-item" data-action="import-data"
+                        style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px;">
                         📄 导入 YAML 配置
                     </div>
                 </div>
@@ -1061,12 +1065,12 @@
     </div>
 
     <div class="sub-toolbar">
-        <div class="sub-left"><button onclick="openAddModal()" data-i18n="newProfile"
+        <div class="sub-left"><button data-action="open-add-modal" data-i18n="newProfile"
                 style="background:var(--accent);color:var(--bg-color);">+ New Profile</button></div>
         <div class="sub-right">
             <input type="text" id="searchInput" class="search-box" placeholder="Search..."
-                oninput="filterProfiles(this.value)">
-            <div class="icon-btn" onclick="toggleViewMode()" title="Toggle View"><svg id="viewIcon" viewBox="0 0 24 24"
+                >
+            <div class="icon-btn" data-action="toggle-view-mode" title="Toggle View"><svg id="viewIcon" viewBox="0 0 24 24"
                     width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="3" y="3" width="7" height="7" />
                     <rect x="14" y="3" width="7" height="7" />
@@ -1085,7 +1089,7 @@
     <div id="addModal" class="modal-overlay">
         <div class="modal-content">
             <div class="modal-header"><span data-i18n="newProfile">New Profile</span><span style="cursor:pointer"
-                    onclick="closeAddModal()">✕</span></div>
+                    data-action="close-add-modal">✕</span></div>
             <div class="modal-body">
                 <label data-i18n="profileName" style="font-size:11px; font-weight:bold; opacity:0.8;">Name</label>
                 <input type="text" id="addName" placeholder="Name" spellcheck="false" autocomplete="off">
@@ -1138,8 +1142,8 @@
                     When enabled, the app can auto-align fingerprint timezone/geo/locale with proxy geo.
                 </div>
             </div>
-            <div class="modal-footer"><button class="outline" onclick="closeAddModal()"
-                    data-i18n="cancel">Cancel</button><button onclick="saveNewProfile()"
+            <div class="modal-footer"><button class="outline" data-action="close-add-modal"
+                    data-i18n="cancel">Cancel</button><button data-action="save-new-profile"
                     data-i18n="generateBtn">Generate</button></div>
         </div>
     </div>
@@ -1148,7 +1152,7 @@
     <div id="editModal" class="modal-overlay">
         <div class="modal-content">
             <div class="modal-header"><span data-i18n="editFingerprint">Edit</span><span style="cursor:pointer"
-                    onclick="closeEditModal()">✕</span></div>
+                    data-action="close-edit-modal">✕</span></div>
             <div class="modal-body">
                 <label data-i18n="profileName" style="font-size:11px; font-weight:bold; opacity:0.8;">Name</label>
                 <input type="text" id="editName">
@@ -1250,8 +1254,8 @@
                     </div>
                 </div>
             </div>
-            <div class="modal-footer"><button class="outline" onclick="closeEditModal()"
-                    data-i18n="cancel">Cancel</button><button onclick="saveEditProfile()" data-i18n="save">Save</button>
+            <div class="modal-footer"><button class="outline" data-action="close-edit-modal"
+                    data-i18n="cancel">Cancel</button><button data-action="save-edit-profile" data-i18n="save">Save</button>
             </div>
         </div>
     </div>
@@ -1260,7 +1264,7 @@
     <div id="proxyModal" class="modal-overlay">
         <div class="modal-content">
             <div class="modal-header"><span data-i18n="manageChain">Manage Chain</span><span style="cursor:pointer"
-                    onclick="closeProxyManager()">✕</span></div>
+                    data-action="close-proxy-manager">✕</span></div>
             <div
                 style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-shrink:0;">
                 <select id="proxyMode" style="width:180px; margin-bottom:0;"></select><label
@@ -1272,11 +1276,11 @@
             <div
                 style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.1); padding:5px 10px; border-radius:4px; margin-bottom:10px; flex-shrink:0;">
                 <div id="currentGroupTitle" style="font-weight:bold; font-size:13px; color:var(--accent);">Manual</div>
-                <div style="display:flex; gap:10px;"><button class="outline" onclick="testCurrentGroup()"
+                <div style="display:flex; gap:10px;"><button class="outline" data-action="test-current-group"
                         data-i18n="btnTestGroup" style="font-size:11px;">⚡ Test All</button><button class="outline"
-                        id="btnRollbackSub" onclick="rollbackSubscriptionNodes(currentProxyGroup)" style="font-size:11px; display:none;">↩ Rollback</button><button class="outline"
-                        id="btnEditSub" onclick="editCurrentSubscription()" style="font-size:11px; display:none;">✎ Edit
-                        Sub</button><button class="outline" onclick="openSubEditModal(true)" data-i18n="btnImportSub"
+                        id="btnRollbackSub" data-action="rollback-current-group" style="font-size:11px; display:none;">↩ Rollback</button><button class="outline"
+                        id="btnEditSub" data-action="edit-current-subscription" style="font-size:11px; display:none;">✎ Edit
+                        Sub</button><button class="outline" data-action="open-sub-edit-modal" data-action-arg="true" data-i18n="btnImportSub"
                         style="font-size:11px;">+ New Sub</button></div>
             </div>
             <div id="preProxyList"></div>
@@ -1284,39 +1288,39 @@
                 <div style="display:flex; gap:5px;"><input type="hidden" id="editProxyId"><input type="text"
                         id="newProxyRemark" placeholder="Remark" style="width:25%; margin-bottom:0;"
                         spellcheck="false"><input type="text" id="newProxyUrl" placeholder="vmess://, ss://..."
-                        style="flex:1; margin-bottom:0;" spellcheck="false"><button onclick="savePreProxy()"
+                        style="flex:1; margin-bottom:0;" spellcheck="false"><button data-action="save-pre-proxy"
                         data-i18n="add" id="btnSaveProxy" style="width:70px; margin-bottom:0;">Add</button></div>
                 <div style="font-size:11px; color:var(--text-secondary); margin-top:5px; text-align:right;"><span
-                        style="cursor:pointer; color:var(--accent);" onclick="resetProxyInput()">[Clear Input]</span>
+                        style="cursor:pointer; color:var(--accent);" data-action="reset-proxy-input">[Clear Input]</span>
                 </div>
             </div>
-            <div style="text-align:right; margin-top:10px; flex-shrink:0;"><button onclick="saveProxySettings()"
+            <div style="text-align:right; margin-top:10px; flex-shrink:0;"><button data-action="save-proxy-settings"
                     data-i18n="done">Done</button></div>
         </div>
     </div>
     <div id="exportModal" class="modal-overlay" style="z-index: 2200;">
         <div class="modal-content">
             <div class="modal-header"><span data-i18n="exportTitle">Export</span><span style="cursor:pointer"
-                    onclick="closeExportModal()">✕</span></div>
-            <div class="export-option" onclick="openExportSelectModal('full-backup')">
+                    data-action="close-export-modal">✕</span></div>
+            <div class="export-option" data-action="open-export-select-modal" data-action-arg="full-backup">
                 <div>
                     <div class="export-title" style="color: var(--accent);" data-i18n="expFullBackup">🔐 完整备份（全部）</div>
                     <div class="export-desc" data-i18n="expFullBackupDesc">含浏览器数据（Cookie/密码/书签），AES-256加密</div>
                 </div><span>🔒</span>
             </div>
-            <div class="export-option" onclick="openExportSelectModal('all')">
+            <div class="export-option" data-action="open-export-select-modal" data-action-arg="all">
                 <div>
                     <div class="export-title" data-i18n="expAllProfiles">完整备份（指纹环境）</div>
                     <div class="export-desc" data-i18n="expAllProfilesDesc">导出指纹配置 + 前置代理（不含浏览器数据）</div>
                 </div><span>📦</span>
             </div>
-            <div class="export-option" onclick="openExportSelectModal('proxies')">
+            <div class="export-option" data-action="open-export-select-modal" data-action-arg="proxies">
                 <div>
                     <div class="export-title" data-i18n="expProxies">前置代理</div>
                     <div class="export-desc" data-i18n="expProxiesDesc">导出手动节点和订阅配置</div>
                 </div><span>🔗</span>
             </div>
-            <div class="export-option" onclick="openExportSelectModal('profiles')">
+            <div class="export-option" data-action="open-export-select-modal" data-action-arg="profiles">
                 <div>
                     <div class="export-title" data-i18n="expProfiles">指纹环境</div>
                     <div class="export-desc" data-i18n="expProfilesDesc">仅导出环境指纹配置</div>
@@ -1333,9 +1337,8 @@
                     <span style="color: var(--accent);">📦</span>
                     <span data-i18n="expSelectTitle">选择要导出的环境</span>
                 </span>
-                <span style="cursor:pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.15s;"
-                    onmouseover="this.style.background='rgba(255,255,255,0.1)'"
-                    onmouseout="this.style.background='transparent'" onclick="closeExportSelectModal()">✕</span>
+                <span class="hover-bg" style="cursor:pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.15s;"
+                    data-action="close-export-select-modal">✕</span>
             </div>
             <div class="modal-body" style="padding: 16px 0;">
                 <!-- 顶部控制栏 -->
@@ -1343,7 +1346,7 @@
                     style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: rgba(0,255,255,0.05); border-radius: 8px; border: 1px solid rgba(0,255,255,0.1);">
                     <label
                         style="display: flex; align-items: center; gap: 10px; cursor: pointer; white-space: nowrap; font-size: 13px;">
-                        <input type="checkbox" id="exportSelectAll" checked onchange="toggleExportSelectAll()"
+                        <input type="checkbox" id="exportSelectAll" checked
                             style="width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer;">
                         <span data-i18n="expSelectAll" style="font-weight: 500;">全选</span>
                     </label>
@@ -1360,9 +1363,9 @@
             </div>
             <div class="modal-footer"
                 style="display: flex; justify-content: flex-end; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
-                <button class="outline" onclick="closeExportSelectModal()" data-i18n="cancel"
+                <button class="outline" data-action="close-export-select-modal" data-i18n="cancel"
                     style="padding: 8px 20px;">取消</button>
-                <button onclick="confirmExport()" data-i18n="expConfirm"
+                <button data-action="confirm-export" data-i18n="expConfirm"
                     style="padding: 8px 24px; background: var(--accent); color: var(--bg-color); font-weight: 600;">导出</button>
             </div>
         </div>
@@ -1372,7 +1375,7 @@
         <div class="modal-content" style="width: 380px;">
             <div class="modal-header">
                 <span id="passwordModalTitle">设置备份密码</span>
-                <span style="cursor:pointer" onclick="closePasswordModal()">✕</span>
+                <span style="cursor:pointer" data-action="close-password-modal">✕</span>
             </div>
             <div class="modal-body">
                 <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 15px;">
@@ -1384,15 +1387,15 @@
                 <input type="password" id="backupPasswordConfirm" placeholder="请再次输入密码">
             </div>
             <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px;">
-                <button class="outline" onclick="closePasswordModal()">取消</button>
-                <button onclick="submitPassword()">确定</button>
+                <button class="outline" data-action="close-password-modal">取消</button>
+                <button data-action="submit-password">确定</button>
             </div>
         </div>
     </div>
     <div id="subEditModal" class="modal-overlay" style="z-index: 1100;">
         <div class="modal-content">
             <div class="modal-header"><span>Sub</span><span style="cursor:pointer"
-                    onclick="closeSubEditModal()">✕</span></div><input type="hidden"
+                    data-action="close-sub-edit-modal">✕</span></div><input type="hidden"
                 id="subId"><label>Name</label><input type="text" id="subName"
                 spellcheck="false"><label>URL</label><input type="text" id="subUrl" spellcheck="false"><label>Auto
                 Update</label><select id="subInterval">
@@ -1401,8 +1404,8 @@
                 <option value="72">72h</option>
                 <option value="custom">Custom</option>
             </select><input type="number" id="subCustomInterval" placeholder="Hours" style="display:none;">
-            <div style="text-align:right; margin-top:15px;"><button class="danger" onclick="deleteSubscription()"
-                    id="btnDelSub" style="float:left;">Delete</button><button onclick="saveSubscription()">Save</button>
+            <div style="text-align:right; margin-top:15px;"><button class="danger" data-action="delete-subscription"
+                    id="btnDelSub" style="float:left;">Delete</button><button data-action="save-subscription">Save</button>
             </div>
         </div>
     </div>
@@ -1412,9 +1415,9 @@
                     style="color: var(--danger); font-size: 40px;">⚠</span></div>
             <p id="confirmMsg" style="margin: 10px 0 20px;">Msg</p>
             <div style="display: flex; justify-content: center; gap: 15px;">
-                <button class="outline" onclick="closeConfirm(false)">Cancel</button>
-                <button id="confirmAltBtn" class="outline" style="display:none;" onclick="closeConfirm('alt')">Alt</button>
-                <button id="confirmOkBtn" class="danger" onclick="closeConfirm(true)">Confirm</button>
+                <button class="outline" data-action="close-confirm" data-action-arg="false">Cancel</button>
+                <button id="confirmAltBtn" class="outline" style="display:none;" data-action="close-confirm" data-action-arg="alt">Alt</button>
+                <button id="confirmOkBtn" class="danger" data-action="close-confirm" data-action-arg="true">Confirm</button>
             </div>
         </div>
     </div>
@@ -1423,7 +1426,7 @@
             <div class="modal-header" style="justify-content: center; border: none;"><span
                     style="color: var(--accent); font-size: 30px;">ℹ</span></div>
             <p id="alertMsg" style="margin: 10px 0 20px;">Msg</p><button id="alertBtn"
-                onclick="document.getElementById('alertModal').style.display='none'">OK</button>
+                data-action="close-alert-modal">OK</button>
         </div>
     </div>
 
@@ -1435,16 +1438,16 @@
         <div class="modal-content" style="max-width: 520px;">
             <div class="modal-header" style="justify-content: space-between;">
                 <span data-i18n="rotatedLogsTitle">Rotated Logs</span>
-                <span style="cursor:pointer" onclick="closeRotatedLogsModal()">✕</span>
+                <span style="cursor:pointer" data-action="close-rotated-logs-modal">✕</span>
             </div>
             <div class="modal-body">
                 <div style="display:flex; gap:8px; margin-bottom:10px;">
-                    <input id="rotatedLogsSearch" type="text" data-i18n-placeholder="rotatedLogsFilter" placeholder="Filter..." style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.2); color: var(--text);" oninput="filterRotatedLogs()" />
+                    <input id="rotatedLogsSearch" type="text" data-i18n-placeholder="rotatedLogsFilter" placeholder="Filter..." style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.2); color: var(--text);" />
                 </div>
                 <div id="rotatedLogsList" style="max-height: 360px; overflow:auto;"></div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:10px;">
-                <button class="outline" data-i18n="done" onclick="closeRotatedLogsModal()">Done</button>
+                <button class="outline" data-i18n="done" data-action="close-rotated-logs-modal">Done</button>
             </div>
         </div>
     </div>
@@ -1453,13 +1456,13 @@
         <div class="modal-content">
             <div class="modal-header">
                 <span data-i18n="settingsTitle">⚙️ Settings</span>
-                <span style="cursor:pointer" onclick="closeSettings()">✕</span>
+                <span style="cursor:pointer" data-action="close-settings">✕</span>
             </div>
 
             <div class="tab-header">
-                <div class="tab-btn active" onclick="switchSettingsTab('extensions')" data-i18n="settingsTabExtensions">
+                <div class="tab-btn active" data-action="switch-settings-tab" data-action-arg="extensions" data-i18n="settingsTabExtensions">
                     Extensions</div>
-                <div class="tab-btn" onclick="switchSettingsTab('advanced')" data-i18n="settingsTabAdvanced"> Advanced
+                <div class="tab-btn" data-action="switch-settings-tab" data-action-arg="advanced" data-i18n="settingsTabAdvanced"> Advanced
                 </div>
             </div>
 
@@ -1471,7 +1474,7 @@
                     <p style="font-size:12px; opacity:0.7; margin-bottom:15px;" data-i18n="settingsExtDesc">
                         Load custom Chrome extensions. Extensions will be loaded automatically when launching profiles.
                     </p>
-                    <button onclick="selectExtensionFolder()" style="margin-bottom:15px;" data-i18n="settingsExtAddBtn">
+                    <button data-action="select-extension-folder" style="margin-bottom:15px;" data-i18n="settingsExtAddBtn">
                         + Add Extension Folder
                     </button>
                     <div id="userExtensionList" style="margin-top:10px;"></div>
@@ -1619,9 +1622,9 @@
                                         style="font-size:12px; color:var(--accent);">http://localhost:<span id="apiPortDisplay">12138</span></code>
                                     <input type="number" id="apiPortInput" value="12138" min="1024" max="65535"
                                         style="width:80px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text-primary); font-size:12px;">
-                                    <button class="outline" onclick="saveApiPort()"
+                                    <button class="outline" data-action="save-api-port"
                                         style="padding:6px 14px; font-size:11px;">Apply</button>
-                                    <a href="#" onclick="openApiDocs(); return false;"
+                                    <a href="#" data-action="open-api-docs"
                                         style="font-size:11px; color:var(--accent); margin-left:auto;"
                                         data-i18n="apiDocs">📄 Docs</a>
                                 </div>
@@ -1629,7 +1632,7 @@
                                     <code style="font-size:11px; color:var(--text-secondary);">X-GeekEZ-API-Token</code>
                                     <input type="text" id="apiTokenInput" readonly
                                         style="flex:1; min-width:240px; max-width:520px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text-primary); font-size:11px;">
-                                    <button class="outline" onclick="copyApiToken()" style="padding:6px 14px; font-size:11px;" data-i18n="apiTokenCopy">Copy</button>
+                                    <button class="outline" data-action="copy-api-token" style="padding:6px 14px; font-size:11px;" data-i18n="apiTokenCopy">Copy</button>
                                 </div>
                                 <div style="font-size:10px; color:var(--text-secondary); opacity:0.8; margin-top:6px; line-height:1.4;">
                                     <span data-i18n="apiTokenHint">Send this token via HTTP header:</span>
@@ -1710,11 +1713,11 @@
                             </div>
 
                             <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                <button class="outline" onclick="selectDataDirectory()" style="flex:1; min-width:120px;"
+                                <button class="outline" data-action="select-data-directory" style="flex:1; min-width:120px;"
                                     data-i18n="dataPathBrowse">
                                     📂 Browse...
                                 </button>
-                                <button class="outline" onclick="resetDataDirectory()" id="resetDataPathBtn"
+                                <button class="outline" data-action="reset-data-directory" id="resetDataPathBtn"
                                     style="flex:1; min-width:120px; display:none;" data-i18n="dataPathReset">
                                     ↩️ Reset to Default
                                 </button>
@@ -1734,17 +1737,17 @@
             </div>
 
             <div class="modal-footer">
-                <button onclick="closeSettings()" data-i18n="btnClose">Close</button>
+                <button data-action="close-settings" data-i18n="btnClose">Close</button>
             </div>
         </div>
     </div>
     <div id="helpModal" class="modal-overlay">
         <div class="modal-content">
             <div class="modal-header" style="border:none;"><span data-i18n="helpTitle">Help</span><span
-                    style="cursor:pointer" onclick="closeHelp()">✕</span></div>
+                    style="cursor:pointer" data-action="close-help">✕</span></div>
             <div class="tab-header">
-                <div class="tab-btn active" onclick="switchHelpTab('manual')" data-i18n="tabManual">Manual</div>
-                <div class="tab-btn" onclick="switchHelpTab('about')" data-i18n="tabAbout">About</div>
+                <div class="tab-btn active" data-action="switch-help-tab" data-action-arg="manual" data-i18n="tabManual">Manual</div>
+                <div class="tab-btn" data-action="switch-help-tab" data-action-arg="about" data-i18n="tabAbout">About</div>
             </div>
             <div style="flex:1; overflow-y:auto; padding-right:10px; color: var(--text-secondary);" id="helpContent">
                 <div id="help-manual" class="help-section active"></div>
@@ -1755,9 +1758,9 @@
     <div id="inputModal" class="modal-overlay" style="z-index: 2100;">
         <div class="modal-content">
             <div class="modal-header"><span id="inputModalTitle">Input</span><span style="cursor:pointer"
-                    onclick="closeInputModal()">✕</span></div><textarea id="inputModalValue" rows="5"
+                    data-action="close-input-modal">✕</span></div><textarea id="inputModalValue" rows="5"
                 spellcheck="false"></textarea>
-            <div style="text-align:right; margin-top:10px;"><button onclick="submitInputModal()"
+            <div style="text-align:right; margin-top:10px;"><button data-action="submit-input-modal"
                     data-i18n="done">OK</button></div>
         </div>
     </div>

@@ -75,6 +75,19 @@ function getProxyEngineFromProfile(profile) {
     return profile.proxyEngine || (profile.fingerprint && profile.fingerprint.proxyEngine) || 'xray';
 }
 
+function singboxEnvForConfig(sbConfig) {
+    const env = { ...process.env };
+    try {
+        const outbounds = sbConfig && Array.isArray(sbConfig.outbounds) ? sbConfig.outbounds : [];
+        const hasWireguard = outbounds.some((o) => o && typeof o === 'object' && String(o.type || '').toLowerCase() === 'wireguard');
+        if (hasWireguard) {
+            // sing-box 1.11+ deprecates legacy wireguard outbound behind an env flag (still present in 1.12.x).
+            env.ENABLE_DEPRECATED_WIREGUARD_OUTBOUND = 'true';
+        }
+    } catch (e) { }
+    return env;
+}
+
 async function startProxyEngine(profile, localPort, configPath, logFd, options = {}) {
     const engine = getProxyEngineFromProfile(profile);
     const proxyStr = profile.proxyStr || '';
@@ -103,7 +116,7 @@ async function startProxyEngine(profile, localPort, configPath, logFd, options =
         } catch (e) { }
         const sbConfig = preProxySpec ? buildSingboxConfigFromProxySpec(spec, localPort, { preProxySpec }) : buildSingboxConfigFromProxySpec(spec, localPort);
         fs.writeJsonSync(configPath, sbConfig);
-        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: { ...process.env }, stdio: ['ignore', logFd, logFd], windowsHide: true });
+        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: singboxEnvForConfig(sbConfig), stdio: ['ignore', logFd, logFd], windowsHide: true });
         return { engine: 'sing-box', pid: sbProcess.pid, process: sbProcess };
     }
 
@@ -739,7 +752,9 @@ ipcMain.handle('test-proxy-node', async (e, proxyStr) => {
 
 function inferProxyTestEngine(proxyStr) {
     const s = String(proxyStr || '').trim().toLowerCase();
-    if (s.startsWith('hysteria2://') || s.startsWith('hy2://') || s.startsWith('tuic://')) return 'sing-box';
+    if (s.startsWith('sb://')) return 'sing-box';
+    if (s.startsWith('hysteria://') || s.startsWith('hysteria2://') || s.startsWith('hy2://') || s.startsWith('tuic://')) return 'sing-box';
+    if (s.startsWith('ss://') && s.includes('?plugin=')) return 'sing-box';
     return 'xray';
 }
 
@@ -767,7 +782,7 @@ async function startProxyProcessForTest({ engine, proxyStr, localPort, configPat
         const spec = normalizeProxySpec(proxyStr);
         const sbConfig = buildSingboxConfigFromProxySpec(spec, localPort);
         await fs.writeJson(configPath, sbConfig);
-        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: { ...process.env }, stdio: 'ignore', windowsHide: true });
+        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: singboxEnvForConfig(sbConfig), stdio: 'ignore', windowsHide: true });
         return { engine: 'sing-box', process: sbProcess };
     }
 
@@ -912,6 +927,29 @@ function buildXrayReleaseDownloadUrls(remoteVer, assetName) {
     return { direct, proxy };
 }
 
+function parseXrayReleaseTagFromUrl(inputUrl, assetName) {
+    if (typeof inputUrl !== 'string' || !inputUrl.trim() || typeof assetName !== 'string' || !assetName) return null;
+    try {
+        const original = new URL(inputUrl.trim());
+        let target = original;
+        if (original.hostname === 'gh-proxy.com') {
+            const raw = String(original.pathname || '').replace(/^\/+/, '');
+            const decoded = decodeURIComponent(raw);
+            if (!decoded.startsWith('https://')) return null;
+            target = new URL(decoded);
+        }
+        if (target.protocol !== 'https:' || target.hostname !== 'github.com') return null;
+        const m = String(target.pathname || '').match(/^\/XTLS\/Xray-core\/releases\/download\/(v\d+\.\d+\.\d+)\/([^/]+)$/);
+        if (!m) return null;
+        const tag = m[1];
+        const file = m[2];
+        if (file !== assetName) return null;
+        return tag;
+    } catch (e) {
+        return null;
+    }
+}
+
 function parseSha256FromDgstText(text) {
     if (typeof text !== 'string') return null;
     const m = text.match(/SHA2-256=\s*([a-f0-9]{64})/i);
@@ -985,20 +1023,16 @@ ipcMain.handle('download-xray-update', async (e, url) => {
             useDirect = inputUrl === direct;
             url = useDirect ? direct : proxy;
         } else {
-            // Fallback: validate by path pattern to block arbitrary GitHub projects.
+            // Fallback: derive release tag from the URL so we can still verify sha256 even when GitHub API is unavailable.
             if (!inputUrl) throw new Error('Missing Xray download URL');
-            let embedded = inputUrl;
+            const derived = parseXrayReleaseTagFromUrl(inputUrl, assetName);
+            if (!derived) throw new Error('Invalid Xray download URL');
+            remoteVer = derived;
             try {
                 const u = new URL(inputUrl);
-                if (u.hostname === 'gh-proxy.com') {
-                    embedded = decodeURIComponent(String(u.pathname || '').replace(/^\/+/, ''));
-                }
-            } catch (e) { }
-            if (!/https:\/\/github\.com\/XTLS\/Xray-core\/releases\/download\//i.test(embedded)) {
-                throw new Error('Invalid Xray download URL');
-            }
-            if (!embedded.endsWith(`/${assetName}`)) {
-                throw new Error('Invalid Xray download URL');
+                useDirect = u.hostname === 'github.com';
+            } catch (e) {
+                useDirect = false;
             }
             url = inputUrl;
         }
@@ -1009,27 +1043,20 @@ ipcMain.handle('download-xray-update', async (e, url) => {
         const zipStat = fs.statSync(zipPath);
         if (zipStat.size <= 0) throw new Error('Download failed: empty file');
         if (!isZipFileHeader(zipPath)) throw new Error('Downloaded file is not a zip');
-        let zipSha = null;
-        try { zipSha = sha256FileHex(zipPath); } catch (e) { }
+        const zipSha = sha256FileHex(zipPath);
+        if (!zipSha || zipSha.length !== 64) throw new Error('Failed to compute zip sha256');
 
-        // Download and verify upstream sha256 digest when possible.
-        if (remoteVer && zipSha) {
-            let expectedSha = null;
-            try {
-                const dgstPath = path.join(tempDir, 'xray.zip.dgst');
-                const { direct: dgstDirect, proxy: dgstProxy } = buildXrayReleaseDownloadUrls(remoteVer, `${assetName}.dgst`);
-                await downloadFile(useDirect ? dgstDirect : dgstProxy, dgstPath, { maxBytes: 1024 * 1024 });
-                const dgstText = fs.readFileSync(dgstPath, 'utf8');
-                expectedSha = parseSha256FromDgstText(dgstText);
-            } catch (e) {
-                console.warn('[Update Warning] Zip sha256 verification skipped:', e.message || e);
-            }
-            if (expectedSha && zipSha.toLowerCase() !== expectedSha) {
-                throw new Error('Downloaded zip sha256 mismatch');
-            }
-        }
+        // Download and verify upstream sha256 digest (required).
+        if (!remoteVer) throw new Error('Failed to determine Xray version for verification');
+        const dgstPath = path.join(tempDir, 'xray.zip.dgst');
+        const { direct: dgstDirect, proxy: dgstProxy } = buildXrayReleaseDownloadUrls(remoteVer, `${assetName}.dgst`);
+        await downloadFile(useDirect ? dgstDirect : dgstProxy, dgstPath, { maxBytes: 1024 * 1024 });
+        const dgstText = fs.readFileSync(dgstPath, 'utf8');
+        const expectedSha = parseSha256FromDgstText(dgstText);
+        if (!expectedSha) throw new Error('Failed to parse upstream zip sha256 digest');
+        if (zipSha.toLowerCase() !== expectedSha) throw new Error('Downloaded zip sha256 mismatch');
 
-        if (zipSha) console.log('[Update] Downloaded zip sha256:', zipSha.slice(0, 16) + '…');
+        console.log('[Update] Downloaded zip sha256:', zipSha.slice(0, 16) + '…');
         if (process.platform === 'win32') await new Promise((resolve) => exec('taskkill /F /IM xray.exe', () => resolve()));
         activeProcesses = {};
         await new Promise(r => setTimeout(r, 3000));
