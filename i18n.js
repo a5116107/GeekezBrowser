@@ -34,6 +34,7 @@ const enTranslations = {
     latency: "Latency",
     testWait: "...",
     themeGeek: "Geek (Blue)", themeLight: "Light (Red)", themeDark: "Dark (Green)",
+    confirm: "Confirm",
     btnImportSub: "+ New Sub",
     btnTestGroup: "⚡ Test Group & Auto-Switch",
     btnTest: "Test",
@@ -62,6 +63,8 @@ const enTranslations = {
     batchHint: "Multiple links = batch create profiles",
     msgBatchCreated: "Batch created",
     msgProfiles: "profiles",
+    msgExportFailed: "Export Failed",
+    saved: "Saved",
     msgExportSuccess: "Export Successful!",
     msgImportSuccess: "Import Successful!",
     msgNoData: "No data found to export.",
@@ -102,6 +105,21 @@ const enTranslations = {
     locationLabel: "Location (Geo)",
     geoAuto: "Auto (IP Based)",
     geoHint: "Select a city matching your proxy. Manual mismatch = ban.",
+    proxyConsistencyMode: "Proxy/Fingerprint Consistency",
+    proxyConsistencyWarn: "Warn only (Recommended)",
+    proxyConsistencyAutofix: "Auto-fix (Timezone/Geo/Locale)",
+    proxyConsistencyBlock: "Block launch on mismatch (Strict)",
+    proxyConsistencyHint: "When enabled, the app can auto-align fingerprint timezone/geo/locale with proxy geo. Strict mode may prevent launching if mismatch is detected.",
+    proxyConsistencyGlobalTitle: "Default Consistency Policy",
+    proxyConsistencyGlobalDesc: "Applies to new profiles and profiles without override.",
+    proxyMismatchTitle: "Proxy/Fingerprint mismatch detected",
+    proxyMismatchDesc: "The current proxy geo does not match this profile fingerprint settings.",
+    proxyMismatchActionAutofix: "Auto-fix & Continue",
+    proxyMismatchActionProceed: "Proceed Anyway",
+    proxyMismatchActionCancel: "Cancel Launch",
+    proxyAutofixLang: "Auto-fix Language",
+    proxyAutofixGeo: "Auto-fix Geo",
+    proxyAutofixHint: "These options only apply when Consistency is set to Auto-fix. Timezone auto-fix is always allowed.",
     settingsTitle: "⚙️ Settings",
     settingsTabExtensions: "🧩 Extensions",
     settingsTabAdvanced: "⚡ Advanced",
@@ -165,14 +183,57 @@ const enTranslations = {
     apiError: "API start failed: ",
     apiPortInvalid: "Port must be between 1024-65535",
     apiPortSaved: "API port saved",
+    apiTokenCopy: "Copy",
+    apiTokenHint: "Send this token via HTTP header:",
+    apiTokenCopied: "API token copied",
     // Developer Features
     devFeaturesTitle: "DEVELOPER FEATURES",
+    systemProxyToggle: "🌐 System Proxy Mode",
+    systemProxyToggleHint: "Route system traffic to the currently running profile's local SOCKS endpoint (Windows)",
+    systemProxyEnabled: "System proxy enabled",
+    systemProxyDisabled: "System proxy disabled",
+    systemProxyNoRunning: "No running profile found (will apply on launch)",
+    systemProxyError: "System proxy error: ",
     debugToggle: "🔧 Remote Debugging",
     debugToggleHint: "Enable remote debugging port for Puppeteer or DevTools connection",
     argsToggle: "⚡ Custom Launch Args",
     argsToggleHint: "Add custom Chrome launch arguments for each profile",
     apiToggle: "🔌 API Server",
-    apiToggleHint: "Enable REST API for remote profile management"
+    apiToggleHint: "Enable REST API for remote profile management",
+
+    // Runtime status / actions
+    workingStatus: "Working...",
+    stopFailedStatus: "Stop Failed",
+    retryNow: "Retry Now",
+    openLog: "Open Log",
+    restart: "Restart",
+    restarting: "Restarting...",
+    retry: "Retry",
+    lastError: "Last error",
+    chooseAction: "Choose action:"
+    ,
+    leakCheck: "LeakCheck",
+    leakStatus: "Leak",
+    engineLabel: "Engine"
+    ,
+    clearLogs: "Clear Logs",
+    logsCleared: "Logs cleared",
+    clearLogsConfirm: "Clear logs for this profile?",
+    stopBeforeClearLogs: "Stop the profile before clearing logs."
+    ,
+    clearLogsHistoryHint: "Also removes rotated history logs."
+    ,
+    clearLogsHistory: "Clear+History"
+    ,
+    rotatedLogsBtn: "Rotated",
+    rotatedLogsTitle: "Rotated Logs",
+    noRotatedLogs: "No rotated logs"
+    ,
+    rotatedLogsFilter: "Filter..."
+    ,
+    confirmDelLog: "Delete this log file?"
+    ,
+    deleted: "Deleted"
 };
 
 // Global i18n Manager

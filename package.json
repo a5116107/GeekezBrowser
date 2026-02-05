@@ -6,6 +6,10 @@
   "author": "EchoHS",
   "scripts": {
     "start": "electron .",
+    "regression:ipc": "node scripts/regression_ipc.js",
+    "regression:i18n": "node scripts/regression_i18n.js",
+    "regression:all": "node scripts/regression_all.js",
+    "poc:p2a": "node scripts/p2a_policy_matrix_poc.js",
     "postinstall": "node setup.js",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",

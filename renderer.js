@@ -3,10 +3,33 @@
 let globalSettings = { preProxies: [], subscriptions: [], mode: 'single', enablePreProxy: false };
 let currentEditId = null;
 let confirmCallback = null;
+let confirmAltCallback = null;
+let confirmCancelCallback = null;
 let currentProxyGroup = 'manual';
 let inputCallback = null;
 let searchText = '';
 let viewMode = localStorage.getItem('geekez_view') || 'list';
+const __restartState = new Set();
+const __lastStatus = new Map();
+const __logSizeCache = new Map(); // id -> { ts:number, total:number }
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => {
+        switch (ch) {
+            case '&': return '&amp;';
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '"': return '&quot;';
+            case "'": return '&#39;';
+            default: return ch;
+        }
+    });
+}
+
+function escapeAttr(value) {
+    // For HTML attribute values (double-quoted).
+    return escapeHtml(value);
+}
 
 // Custom City Dropdown Initialization (Matches Timezone Logic)
 function initCustomCityDropdown(inputId, dropdownId) {
@@ -366,6 +389,7 @@ function renderHelpContent() {
 
 function applyLang() {
     document.querySelectorAll('[data-i18n]').forEach(el => { el.innerText = t(el.getAttribute('data-i18n')); });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.setAttribute('placeholder', t(el.getAttribute('data-i18n-placeholder'))); });
     document.querySelectorAll('.running-badge').forEach(el => { el.innerText = t('runningStatus'); });
     const themeSel = document.getElementById('themeSelect');
     if (themeSel) { themeSel.options[0].text = t('themeGeek'); themeSel.options[1].text = t('themeLight'); themeSel.options[2].text = t('themeDark'); }
@@ -398,11 +422,68 @@ function showAlert(msg, showBtn = true) {
     if (btn) btn.style.display = showBtn ? 'block' : 'none';
     document.getElementById('alertModal').style.display = 'flex';
 }
-function showConfirm(msg, callback) { document.getElementById('confirmMsg').innerText = msg; document.getElementById('confirmModal').style.display = 'flex'; confirmCallback = callback; }
+function showConfirm(msg, callback) {
+    const altBtn = document.getElementById('confirmAltBtn');
+    if (altBtn) altBtn.style.display = 'none';
+    const okBtn = document.getElementById('confirmOkBtn');
+    if (okBtn) okBtn.textContent = t('confirm') || 'Confirm';
+    confirmAltCallback = null;
+    confirmCancelCallback = null;
+    document.getElementById('confirmMsg').innerText = msg;
+    document.getElementById('confirmModal').style.display = 'flex';
+    confirmCallback = callback;
+}
+
+let __toastTimer = null;
+function showToast(msg, durationMs = 1800) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.innerText = msg;
+    el.style.display = 'block';
+    clearTimeout(__toastTimer);
+    __toastTimer = setTimeout(() => { el.style.display = 'none'; }, durationMs);
+}
+
+function formatIpcError(err) {
+    if (!err) return { message: 'unknown', code: null };
+    if (typeof err === 'string') return { message: err, code: null };
+    const code = err.code || err.errorCode || null;
+    const message = err.message || err.error || JSON.stringify(err);
+    return { message, code };
+}
+
+function formatResultError(result, fallbackMessage) {
+    if (!result) return { message: fallbackMessage || 'unknown', code: null };
+    const code = result.code || result.errorCode || null;
+    const message = result.error || result.message || (result.errors ? result.errors.join('; ') : null) || fallbackMessage || 'unknown';
+    return { message, code };
+}
+
+function showConfirmChoice(msg, options) {
+    const altBtn = document.getElementById('confirmAltBtn');
+    if (altBtn) {
+        altBtn.textContent = options && options.altText ? options.altText : 'Alt';
+        altBtn.style.display = 'inline-block';
+    }
+    const okBtn = document.getElementById('confirmOkBtn');
+    if (okBtn) okBtn.textContent = (options && options.okText) ? options.okText : (t('confirm') || 'Confirm');
+    confirmAltCallback = options && typeof options.onAlt === 'function' ? options.onAlt : null;
+    confirmCancelCallback = options && typeof options.onCancel === 'function' ? options.onCancel : null;
+    document.getElementById('confirmMsg').innerText = msg;
+    document.getElementById('confirmModal').style.display = 'flex';
+    confirmCallback = options && typeof options.onConfirm === 'function' ? options.onConfirm : null;
+}
+
 function closeConfirm(result) {
     document.getElementById('confirmModal').style.display = 'none';
-    if (result && confirmCallback) confirmCallback();
+    if (result === 'alt' && confirmAltCallback) confirmAltCallback();
+    if (result === true && confirmCallback) confirmCallback();
+    if (result === false && confirmCancelCallback) confirmCancelCallback();
     confirmCallback = null;
+    confirmAltCallback = null;
+    confirmCancelCallback = null;
+    const altBtn = document.getElementById('confirmAltBtn');
+    if (altBtn) altBtn.style.display = 'none';
 }
 
 function showInput(title, callback) {
@@ -431,10 +512,20 @@ async function init() {
 
     document.getElementById('enablePreProxy').checked = globalSettings.enablePreProxy || false;
     document.getElementById('enablePreProxy').addEventListener('change', updateToolbar);
+    let __statusRefreshTimer = null;
     window.electronAPI.onProfileStatus(({ id, status }) => {
+        __lastStatus.set(id, status);
         const badge = document.getElementById(`status-${id}`);
+        if (status === 'running') __restartState.delete(id);
+        if (status === 'stopped' || status === 'stop_failed') __restartState.delete(id);
+        if (status === 'restarting' || status === 'starting' || status === 'stopping') __restartState.add(id);
         if (badge) status === 'running' ? badge.classList.add('active') : badge.classList.remove('active');
+        clearTimeout(__statusRefreshTimer);
+        __statusRefreshTimer = setTimeout(() => loadProfiles(), 250);
     });
+    if (window.electronAPI.onLeakCheckFinished) {
+        window.electronAPI.onLeakCheckFinished(() => loadProfiles());
+    }
 
     // API event listeners for remote refresh and launch
     window.electronAPI.onRefreshProfiles(() => {
@@ -446,6 +537,51 @@ async function init() {
         console.log('API triggered launch for:', id);
         launch(id);
     });
+
+    if (window.electronAPI.onProxyConsistencyWarning) {
+        window.electronAPI.onProxyConsistencyWarning((payload) => {
+            try {
+                const profileId = payload && payload.profileId ? payload.profileId : null;
+                const issues = payload && payload.issues ? payload.issues : [];
+                const details = formatConsistencyIssues(issues);
+                const title = t('proxyMismatchTitle') || 'Proxy/Fingerprint mismatch detected';
+                const desc = t('proxyMismatchDesc') || 'The current proxy geo does not match this profile fingerprint settings.';
+                const msg = `${title}\n\n${desc}\n\n${details}`;
+
+                showConfirmChoice(msg, {
+                    okText: t('proxyMismatchActionProceed') || 'Proceed Anyway',
+                    altText: t('proxyMismatchActionAutofix') || 'Auto-fix & Continue',
+                    onAlt: async () => {
+                        try {
+                            const profiles = await window.electronAPI.getProfiles();
+                            const p = profiles.find(x => x.id === profileId);
+                            if (!p) return;
+                            p.proxyPolicy = p.proxyPolicy || {};
+                            p.proxyPolicy.autoLink = true;
+                            p.proxyPolicy.consistencyPolicy = { enforce: true, onMismatch: 'autofix' };
+                            p.proxyPolicy.allowAutofix = { geo: true, language: true };
+                            await window.electronAPI.updateProfile(p);
+                            await loadProfiles();
+                            await launch(profileId);
+                        } catch (e) {
+                            showAlert('Error: ' + e.message);
+                        }
+                    },
+                    onConfirm: async () => {
+                        try {
+                            const watermarkStyle = localStorage.getItem('geekez_watermark_style') || 'enhanced';
+                            await window.electronAPI.launchProfile(profileId, watermarkStyle, { skipProxyWarnOnce: true });
+                        } catch (e) {
+                            showAlert('Error: ' + e.message);
+                        }
+                    },
+                    onCancel: () => { }
+                });
+            } catch (e) {
+                console.error('Failed to handle proxy-consistency-warning:', e);
+            }
+        });
+    }
 
     // 核心修复：版本号注入
     const info = await window.electronAPI.invoke('get-app-info');
@@ -486,7 +622,7 @@ async function checkUpdates() {
     btn.style.transform = 'rotate(360deg)';
 
     // Show "Checking..." without button
-    showAlert(t('checkingUpdate'), false);
+    showToast(t('checkingUpdate') || 'Checking update...', 1200);
 
     try {
         const appRes = await window.electronAPI.invoke('check-app-update');
@@ -502,15 +638,15 @@ async function checkUpdates() {
 
         const xrayRes = await window.electronAPI.invoke('check-xray-update');
         if (xrayRes.update) {
-            showAlert(`${t('xrayUpdateFound')} (v${xrayRes.remote})`); // Shows OK button
+            showToast(`${t('xrayUpdateFound') || 'Update found'} (v${xrayRes.remote})`, 1800);
             const success = await window.electronAPI.invoke('download-xray-update', xrayRes.downloadUrl);
-            if (success) showAlert(t('updateDownloaded'));
+            if (success) showToast(t('updateDownloaded') || 'Downloaded', 1800);
             else showAlert(t('updateError'));
             return;
         }
 
         // No Update -> Show Alert with OK button
-        showAlert(t('noUpdate'));
+        showToast(t('noUpdate') || 'No update', 1200);
 
         // Clear badge if no update found after manual check
         btn.classList.remove('has-update');
@@ -556,7 +692,7 @@ function showUpdateConfirm(version, url) {
     const yesBtn = document.getElementById('confirmYes');
     const noBtn = document.getElementById('confirmNo');
 
-    msgEl.innerHTML = `${t('appUpdateFound')} (v${version})<br><br>${t('askUpdate')}?`;
+    msgEl.innerHTML = `${t('appUpdateFound')} (v${escapeHtml(version)})<br><br>${t('askUpdate')}?`;
 
     // Update button - go to download page
     yesBtn.textContent = t('goDownload') || '前往下载';
@@ -587,6 +723,160 @@ function toggleViewMode() {
     viewMode = viewMode === 'list' ? 'grid' : 'list';
     localStorage.setItem('geekez_view', viewMode);
     loadProfiles();
+}
+
+async function runLeakCheck(profileId) {
+    try {
+        const res = await window.electronAPI.runLeakCheck(profileId);
+        if (!res || !res.success) {
+            showAlert((res && res.error) ? res.error : 'Leak check failed');
+            return;
+        }
+        showToast(`LeakCheck: ${res.status}`);
+        if (res.reportPath) {
+            // Best-effort: open folder containing report
+            try { await window.electronAPI.openPath(res.reportPath); } catch (e) { }
+        }
+        loadProfiles();
+    } catch (e) {
+        showAlert(e.message || 'Leak check failed');
+    }
+}
+
+async function openLastLeakReport(profile) {
+    try {
+        const last = profile && profile.diagnostics ? profile.diagnostics.lastLeakReport : null;
+        if (!last || !last.path) return showAlert('No leak report yet');
+        await window.electronAPI.openPath(last.path);
+    } catch (e) {
+        showAlert(e.message || 'Failed to open report');
+    }
+}
+
+async function openLastLeakReportById(profileId) {
+    try {
+        const profiles = await window.electronAPI.getProfiles();
+        const p = profiles.find(x => x.id === profileId);
+        if (!p) return showAlert('Profile not found');
+        await openLastLeakReport(p);
+    } catch (e) {
+        showAlert(e.message || 'Failed to open report');
+    }
+}
+
+function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return '0B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let n = bytes;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return `${n.toFixed(i === 0 ? 0 : 1)}${units[i]}`;
+}
+
+function closeRotatedLogsModal() {
+    const m = document.getElementById('rotatedLogsModal');
+    if (m) m.style.display = 'none';
+    __rotatedLogsCurrentProfileId = null;
+}
+
+function filterRotatedLogs() {
+    const input = document.getElementById('rotatedLogsSearch');
+    const q = input ? input.value.trim().toLowerCase() : '';
+    const list = document.getElementById('rotatedLogsList');
+    if (!list) return;
+    Array.from(list.children).forEach((child) => {
+        const name = (child.getAttribute('data-log-name') || '').toLowerCase();
+        child.style.display = !q || name.includes(q) ? '' : 'none';
+    });
+}
+
+let __rotatedLogsCurrentProfileId = null;
+
+async function openRotatedLogsById(profileId) {
+    try {
+        __rotatedLogsCurrentProfileId = profileId;
+        const res = await window.electronAPI.listProfileRotatedLogs(profileId);
+        if (!res || !res.success) return showAlert((res && res.error) ? res.error : 'Failed to list logs');
+        const list = document.getElementById('rotatedLogsList');
+        if (!list) return;
+        const search = document.getElementById('rotatedLogsSearch');
+        if (search) search.value = '';
+        list.innerHTML = '';
+        if (!res.files || res.files.length === 0) {
+            list.innerHTML = `<div style="opacity:0.7; padding:10px;">${t('noRotatedLogs') || 'No rotated logs'}</div>`;
+        } else {
+            res.files.forEach(f => {
+                const item = document.createElement('div');
+                item.className = 'no-drag';
+                item.style.cssText = 'padding:10px; border:1px solid rgba(255,255,255,0.10); border-radius:10px; margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:10px;';
+                item.setAttribute('data-log-name', f.name || '');
+                const fileName = f.name || '';
+                const safeNameText = escapeHtml(fileName);
+                const safeNameAttr = escapeAttr(fileName);
+                item.innerHTML = `<div style="flex:1; cursor:pointer; min-width:0;"><div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${safeNameText}</div><div style="font-size:11px; opacity:0.7;">${formatBytes(f.size || 0)}</div></div><div style="display:flex; gap:8px;"><button class="outline no-drag" style="padding:6px 10px;" data-log-open="${safeNameAttr}">${t('openLog') || 'Open Log'}</button><button class="outline no-drag" style="padding:6px 10px; border-color:#ef4444; color:#ef4444;" data-log-del="${safeNameAttr}">${t('delete') || 'Delete'}</button></div>`;
+                item.querySelector('div').onclick = async () => { await window.electronAPI.openPath(f.path); };
+                const openBtn = item.querySelector('button[data-log-open]');
+                if (openBtn) {
+                    openBtn.onclick = async (ev) => { ev.stopPropagation(); await window.electronAPI.openPath(f.path); };
+                }
+                const delBtn = item.querySelector('button[data-log-del]');
+                if (delBtn) {
+                    delBtn.onclick = async (ev) => {
+                        ev.stopPropagation();
+                        await confirmDeleteRotatedLog(f.name);
+                    };
+                }
+                list.appendChild(item);
+            });
+            filterRotatedLogs();
+        }
+        const modal = document.getElementById('rotatedLogsModal');
+        if (modal) modal.style.display = 'flex';
+    } catch (e) {
+        showAlert(e.message || 'Failed to list logs');
+    }
+}
+
+async function confirmDeleteRotatedLog(filename) {
+    if (!__rotatedLogsCurrentProfileId) return;
+    showConfirm(`${t('confirmDelLog') || 'Delete this log file?'}\n${filename}`, async () => {
+        const res = await window.electronAPI.deleteProfileRotatedLog(__rotatedLogsCurrentProfileId, filename);
+        if (!res || !res.success) return showAlert((res && res.error) ? res.error : 'Delete failed');
+        showToast(t('deleted') || 'Deleted');
+        await openRotatedLogsById(__rotatedLogsCurrentProfileId);
+    });
+}
+
+async function openProfileLogById(profileId) {
+    try {
+        const profiles = await window.electronAPI.getProfiles();
+        const p = profiles.find(x => x.id === profileId);
+        if (!p) return showAlert('Profile not found');
+        const logPath = await window.electronAPI.getProfileLogPath(profileId);
+        if (!logPath) return showAlert('Log path not available');
+        await window.electronAPI.openPath(logPath);
+    } catch (e) {
+        showAlert(e.message || 'Failed to open log');
+    }
+}
+
+async function clearProfileLogsById(profileId, clearHistory = false) {
+    try {
+        const runningIds = await window.electronAPI.getRunningIds();
+        if (runningIds.includes(profileId)) {
+            return showAlert(t('stopBeforeClearLogs') || 'Stop the profile before clearing logs.');
+        }
+        const prompt = clearHistory
+            ? `${t('clearLogsConfirm') || 'Clear logs for this profile?'}\n${t('clearLogsHistoryHint') || 'This will also remove rotated history logs.'}`
+            : (t('clearLogsConfirm') || 'Clear logs for this profile?');
+        showConfirm(prompt, async () => {
+            const res = await window.electronAPI.clearProfileLogs(profileId, clearHistory);
+            if (!res || !res.success) return showAlert((res && res.error) ? res.error : 'Failed to clear logs');
+            showToast(t('logsCleared') || 'Logs cleared');
+        });
+    } catch (e) {
+        showAlert(e.message || 'Failed to clear logs');
+    }
 }
 
 // 简单的颜色生成器
@@ -632,12 +922,21 @@ async function loadProfiles() {
             const screen = fp.screen || { width: 0, height: 0 };
             const override = p.preProxyOverride || 'default';
             const isRunning = runningIds.includes(p.id);
+            const isRestarting = __restartState.has(p.id);
+            const lastStatus = __lastStatus.get(p.id);
+            const engine = p.proxyEngine || (fp && fp.proxyEngine) || 'xray';
+            const lastLeak = p.diagnostics && p.diagnostics.lastLeakReport ? p.diagnostics.lastLeakReport : null;
+            const leakStatus = lastLeak && lastLeak.summary && lastLeak.summary.webrtc === 'leak' ? 'red' : null;
+            const leakText = lastLeak ? (lastLeak.summary && lastLeak.summary.errorCode ? 'ERR' : 'OK') : 'N/A';
+            const leakTagAttrs = lastLeak && lastLeak.path ? `style="border:1px solid ${leakStatus === 'red' ? '#ef4444' : 'var(--accent)'}; cursor:pointer;" onclick="openLastLeakReportById('${p.id}')"` : `style="border:1px solid ${leakStatus === 'red' ? '#ef4444' : 'var(--accent)'};"`;
+            const lastErr = p.diagnostics && p.diagnostics.lastError ? p.diagnostics.lastError : null;
+            const errText = lastErr ? `${lastErr.stage || 'err'}: ${(lastErr.message || '').slice(0, 60)}` : '';
 
             // 渲染标签 HTML
             let tagsHtml = '';
             if (p.tags && p.tags.length > 0) {
                 tagsHtml = p.tags.map(tag =>
-                    `<span class="tag" style="background:${stringToColor(tag)}33; color:${stringToColor(tag)}; border:1px solid ${stringToColor(tag)}44;">${tag}</span>`
+                    `<span class="tag" style="background:${stringToColor(tag)}33; color:${stringToColor(tag)}; border:1px solid ${stringToColor(tag)}44;">${escapeHtml(tag)}</span>`
                 ).join('');
             }
 
@@ -645,11 +944,15 @@ async function loadProfiles() {
             el.className = 'profile-item no-drag';
             el.innerHTML = `
                 <div class="profile-info">
-                    <div style="display:flex; align-items:center;"><h4>${p.name}</h4><span id="status-${p.id}" class="running-badge ${isRunning ? 'active' : ''}">${t('runningStatus')}</span></div>
+                    <div style="display:flex; align-items:center;"><h4>${escapeHtml(p.name)}</h4><span id="status-${p.id}" class="running-badge ${isRunning ? 'active' : ''}">${isRestarting ? (t('workingStatus') || 'Working...') : (lastStatus === 'stop_failed' ? (t('stopFailedStatus') || 'Stop Failed') : t('runningStatus'))}</span></div>
                     <div class="profile-meta">
                         ${tagsHtml} <!-- 插入标签 -->
-                        <span class="tag">${p.proxyStr.split('://')[0].toUpperCase() || 'N/A'}</span>
+                        <span class="tag">${escapeHtml((p.proxyStr || '').split('://')[0].toUpperCase() || 'N/A')}</span>
+                        <span class="tag">${t('engineLabel') || 'Engine'}:${escapeHtml(engine)}</span>
+                        <span class="tag" id="logsize-${p.id}">Log:...</span>
                         <span class="tag">${screen.width}x${screen.height}</span>
+                        <span class="tag" ${leakTagAttrs}>${t('leakStatus') || 'Leak'}:${leakText}</span>
+                        ${lastErr ? `<span class="tag" style="border:1px solid #ef4444;color:#ef4444;cursor:pointer;" onclick="openProfileLogById('${p.id}')" title="${escapeAttr(lastErr.message || '')}">${escapeHtml(errText)}</span>` : ''}
                         <span class="tag" style="border:1px solid var(--accent);">
                             <select class="quick-switch-select no-drag" onchange="quickUpdatePreProxy('${p.id}', this.value)">
                                 <option value="default" ${override === 'default' ? 'selected' : ''}>${t('qsDefault')}</option>
@@ -659,9 +962,28 @@ async function loadProfiles() {
                         </span>
                     </div>
                 </div>
-                <div class="actions"><button onclick="launch('${p.id}')" class="no-drag">${t('launch')}</button><button class="outline no-drag" onclick="openEditModal('${p.id}')">${t('edit')}</button><button class="danger no-drag" onclick="remove('${p.id}')">${t('delete')}</button></div>
+                <div class="actions"><button onclick="launch('${p.id}')" class="no-drag" ${isRestarting ? 'disabled' : ''}>${t('launch')}</button><button class="outline no-drag" onclick="restart('${p.id}')" ${isRunning && !isRestarting ? '' : 'disabled'}>${isRestarting ? (t('restarting') || 'Restarting...') : (t('restart') || 'Restart')}</button>${lastStatus === 'stop_failed' ? `<button class="outline no-drag" onclick="openProfileLogById('${p.id}')" style="border-color:#ef4444;color:#ef4444;">${t('openLog') || 'Open Log'}</button><button class="outline no-drag" onclick="restart('${p.id}')" title=\"${t('openLog') || 'Open Log'}\">${t('retry') || 'Retry'}</button>` : ''}<button class="outline no-drag" onclick="openEditModal('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('edit')}</button><button class="outline no-drag" onclick="openProfileLogById('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('openLog') || 'Open Log'}</button><button class="outline no-drag" onclick="openRotatedLogsById('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('rotatedLogsBtn') || 'Rotated'}</button><button class="outline no-drag" onclick="clearProfileLogsById('${p.id}')" ${isRunning || isRestarting ? 'disabled' : ''}>${t('clearLogs') || 'Clear Logs'}</button><button class="outline no-drag" onclick="clearProfileLogsById('${p.id}', true)" ${isRunning || isRestarting ? 'disabled' : ''} title="${t('clearLogsHistoryHint') || 'Also removes rotated history logs'}">${t('clearLogsHistory') || 'Clear+History'}</button><button class="outline no-drag" onclick="runLeakCheck('${p.id}')" ${isRunning && !isRestarting ? '' : 'disabled'}>${t('leakCheck') || 'LeakCheck'}</button><button class="danger no-drag" onclick="remove('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('delete')}</button></div>
             `;
             listEl.appendChild(el);
+            // async log size fill (non-blocking)
+            setTimeout(async () => {
+                try {
+                    const cached = __logSizeCache.get(p.id);
+                    const now = Date.now();
+                    if (cached && (now - cached.ts) < 10000) {
+                        const elSize = document.getElementById(`logsize-${p.id}`);
+                        if (elSize) elSize.innerText = `Log:${formatBytes(cached.total)}`;
+                        return;
+                    }
+
+                    const sizes = await window.electronAPI.getProfileLogSizes(p.id);
+                    const elSize = document.getElementById(`logsize-${p.id}`);
+                    if (!elSize || !sizes || !sizes.success) return;
+                    const total = (sizes.xray || 0) + (sizes.singbox || 0);
+                    elSize.innerText = `Log:${formatBytes(total)}`;
+                    __logSizeCache.set(p.id, { ts: now, total });
+                } catch (e) { }
+            }, 0);
         });
     } catch (e) { console.error(e); }
 }
@@ -678,6 +1000,10 @@ function openAddModal() {
     document.getElementById('addProxy').value = '';
     document.getElementById('addTags').value = ''; // Clear tags
     document.getElementById('addTimezone').value = 'Auto (No Change)';
+    const engineEl = document.getElementById('addProxyEngine');
+    if (engineEl) engineEl.value = 'xray';
+    const consistencyEl = document.getElementById('addProxyConsistency');
+    if (consistencyEl) consistencyEl.value = 'warn';
 
     // Initialize location dropdown
     initCustomCityDropdown('addCity', 'addCityDropdown');
@@ -694,6 +1020,10 @@ function closeAddModal() { document.getElementById('addModal').style.display = '
 async function saveNewProfile() {
     const nameBase = document.getElementById('addName').value.trim();
     const proxyText = document.getElementById('addProxy').value.trim();
+    const proxyEngine = document.getElementById('addProxyEngine') ? document.getElementById('addProxyEngine').value : 'xray';
+    const settings = await window.electronAPI.getSettings().catch(() => ({}));
+    const defaultConsistency = settings.defaultProxyConsistency || 'warn';
+    const proxyConsistency = document.getElementById('addProxyConsistency') ? document.getElementById('addProxyConsistency').value : defaultConsistency;
     const tagsStr = document.getElementById('addTags').value;
     const timezoneInput = document.getElementById('addTimezone').value;
     // 将 "Auto (No Change)" 转换为 "Auto" 存储
@@ -742,7 +1072,19 @@ async function saveNewProfile() {
         }
 
         try {
-            await window.electronAPI.saveProfile({ name, proxyStr, tags, timezone, city, geolocation, language });
+            const consistencyPolicy = { enforce: true, onMismatch: proxyConsistency };
+            const allowAutofix = { language: proxyConsistency === 'autofix', geo: proxyConsistency === 'autofix' };
+            await window.electronAPI.saveProfile({
+                name,
+                proxyStr,
+                tags,
+                timezone,
+                city,
+                geolocation,
+                language,
+                proxyEngine,
+                proxyPolicy: { autoLink: true, consistencyPolicy, allowAutofix }
+            });
             createdCount++;
         } catch (e) {
             console.error(`Failed to create profile ${name}:`, e);
@@ -753,20 +1095,73 @@ async function saveNewProfile() {
     await loadProfiles();
 
     if (proxyLines.length > 1) {
-        showAlert(`${t('msgBatchCreated') || '批量创建成功'}: ${createdCount} ${t('msgProfiles') || '个环境'}`);
+        showToast(`${t('msgBatchCreated') || '批量创建成功'}: ${createdCount} ${t('msgProfiles') || '个环境'}`, 2200);
     }
 }
 
 async function launch(id) {
     try {
         const watermarkStyle = localStorage.getItem('geekez_watermark_style') || 'enhanced';
-        const msg = await window.electronAPI.launchProfile(id, watermarkStyle);
+        const msg = await window.electronAPI.launchProfile(id, watermarkStyle, {});
         if (msg && msg.includes(':')) showAlert(msg);
     } catch (e) { showAlert('Error: ' + e.message); }
 }
 
+function formatConsistencyIssues(issues) {
+    if (!Array.isArray(issues) || issues.length === 0) return '-';
+    return issues.map(i => {
+        const code = i && i.code ? i.code : 'ISSUE';
+        const msg = i && i.message ? i.message : '';
+        return `- ${code}${msg ? `: ${msg}` : ''}`;
+    }).join('\n');
+}
+
+async function restart(id) {
+    try {
+        if (__restartState.has(id)) return;
+        __restartState.add(id);
+        await loadProfiles();
+        const profiles = await window.electronAPI.getProfiles();
+        const p = profiles.find(x => x.id === id);
+        const lastErr = p && p.diagnostics ? p.diagnostics.lastError : null;
+        if (lastErr && lastErr.message && typeof showConfirmChoice === 'function') {
+            // Pause restart flow until user chooses.
+            const shouldContinue = await new Promise((resolve) => {
+                showConfirmChoice(
+                    `${t('lastError') || 'Last error'}: ${(lastErr.message || '').slice(0, 160)}\n${t('chooseAction') || 'Choose action:'}`,
+                    {
+                        altText: t('openLog') || 'Open Log',
+                        okText: t('retryNow') || 'Retry Now',
+                        onAlt: async () => { await openProfileLogById(id); resolve(false); },
+                        onConfirm: async () => { resolve(true); },
+                        onCancel: async () => { resolve(false); }
+                    }
+                );
+            });
+            if (!shouldContinue) return;
+        }
+        // Immediately reflect work state in UI
+        __restartState.add(id);
+        await loadProfiles();
+        const watermarkStyle = localStorage.getItem('geekez_watermark_style') || 'enhanced';
+        await window.electronAPI.stopProfile(id);
+        await launch(id);
+    } catch (e) {
+        showAlert('Restart Error: ' + e.message);
+    } finally {
+        __restartState.delete(id);
+        await loadProfiles();
+    }
+}
+
 function remove(id) {
     showConfirm(t('confirmDel'), async () => { await window.electronAPI.deleteProfile(id); await loadProfiles(); });
+}
+
+async function stopProfile(id) {
+    try {
+        await window.electronAPI.stopProfile(id);
+    } catch (e) { }
 }
 
 async function openEditModal(id) {
@@ -774,9 +1169,32 @@ async function openEditModal(id) {
     const p = profiles.find(x => x.id === id);
     if (!p) return;
     currentEditId = id;
+    window.__geekez_edit_snapshot = {
+        id,
+        proxyStr: p.proxyStr,
+        proxyEngine: p.proxyEngine || (p.fingerprint && p.fingerprint.proxyEngine) || 'xray'
+    };
     const fp = p.fingerprint || {};
     document.getElementById('editName').value = p.name;
     document.getElementById('editProxy').value = p.proxyStr;
+    const editProxyEngine = document.getElementById('editProxyEngine');
+    if (editProxyEngine) editProxyEngine.value = p.proxyEngine || (fp && fp.proxyEngine) || 'xray';
+
+    const editConsistency = document.getElementById('editProxyConsistency');
+    if (editConsistency) {
+        const onMismatch = (p.proxyPolicy && p.proxyPolicy.consistencyPolicy && p.proxyPolicy.consistencyPolicy.onMismatch) ? p.proxyPolicy.consistencyPolicy.onMismatch : 'warn';
+        editConsistency.value = onMismatch;
+    }
+    const editAutofixLang = document.getElementById('editProxyAutofixLanguage');
+    if (editAutofixLang) {
+        const allow = (p.proxyPolicy && p.proxyPolicy.allowAutofix) ? p.proxyPolicy.allowAutofix : null;
+        editAutofixLang.value = (allow && allow.language === true) ? 'on' : 'off';
+    }
+    const editAutofixGeo = document.getElementById('editProxyAutofixGeo');
+    if (editAutofixGeo) {
+        const allow = (p.proxyPolicy && p.proxyPolicy.allowAutofix) ? p.proxyPolicy.allowAutofix : null;
+        editAutofixGeo.value = (allow && allow.geo === true) ? 'on' : 'off';
+    }
     document.getElementById('editTags').value = (p.tags || []).join(', ');
 
     // 回填时区，将 "Auto" 转换为 "Auto (No Change)" 显示
@@ -829,8 +1247,24 @@ async function saveEditProfile() {
     let p = profiles.find(x => x.id === currentEditId);
     console.log('[saveEditProfile] Found profile:', p);
     if (p) {
+        const runningIds = await window.electronAPI.getRunningIds();
+        const wasRunning = runningIds.includes(p.id);
+        const before = window.__geekez_edit_snapshot || { proxyStr: p.proxyStr, proxyEngine: p.proxyEngine || 'xray' };
         p.name = document.getElementById('editName').value;
         p.proxyStr = document.getElementById('editProxy').value;
+        const editProxyEngine = document.getElementById('editProxyEngine');
+        if (editProxyEngine) p.proxyEngine = editProxyEngine.value || 'xray';
+        const editConsistency = document.getElementById('editProxyConsistency');
+        const onMismatch = editConsistency ? (editConsistency.value || 'warn') : 'warn';
+        p.proxyPolicy = p.proxyPolicy || {};
+        p.proxyPolicy.autoLink = true;
+        p.proxyPolicy.consistencyPolicy = { enforce: true, onMismatch };
+        const editAutofixLang = document.getElementById('editProxyAutofixLanguage');
+        const editAutofixGeo = document.getElementById('editProxyAutofixGeo');
+        p.proxyPolicy.allowAutofix = {
+            language: editAutofixLang ? (editAutofixLang.value === 'on') : false,
+            geo: editAutofixGeo ? (editAutofixGeo.value === 'on') : false
+        };
         const tagsStr = document.getElementById('editTags').value;
         p.tags = tagsStr.split(/[,，]/).map(s => s.trim()).filter(s => s);
         p.preProxyOverride = document.getElementById('editPreProxyOverride').value;
@@ -875,7 +1309,15 @@ async function saveEditProfile() {
         console.log('[saveEditProfile] Calling updateProfile...');
         await window.electronAPI.updateProfile(p);
         console.log('[saveEditProfile] Profile updated successfully');
-        closeEditModal(); loadProfiles();
+        closeEditModal(); await loadProfiles();
+
+        const proxyChanged = (before.proxyStr !== p.proxyStr) || (before.proxyEngine !== p.proxyEngine);
+        if (wasRunning && proxyChanged) {
+            showConfirm('Proxy settings changed. Restart this profile now to apply?', async () => {
+                await stopProfile(p.id);
+                await launch(p.id);
+            });
+        }
     }
 }
 
@@ -931,10 +1373,14 @@ function renderProxyNodes() {
     if (btnNewSub) btnNewSub.innerText = t('btnImportSub');
     const btnEditSub = document.getElementById('btnEditSub');
     if (btnEditSub) btnEditSub.innerText = t('btnEditSub');
+    const btnRollbackSub = document.getElementById('btnRollbackSub');
+    if (btnRollbackSub) btnRollbackSub.innerText = '↩ Rollback';
 
     const isManual = currentProxyGroup === 'manual';
     document.getElementById('manualAddArea').style.display = isManual ? 'block' : 'none';
     document.getElementById('btnEditSub').style.display = isManual ? 'none' : 'inline-block';
+    const currentSub = globalSettings.subscriptions.find(s => s.id === currentProxyGroup);
+    if (btnRollbackSub) btnRollbackSub.style.display = (!isManual && currentSub && currentSub.snapshots && currentSub.snapshots.length > 0) ? 'inline-block' : 'none';
 
     list.forEach(p => {
         const div = document.createElement('div');
@@ -961,11 +1407,35 @@ function renderProxyNodes() {
         const proto = (p.url.split('://')[0] || 'UNK').toUpperCase();
         let displayRemark = p.remark;
         if (!displayRemark || displayRemark.trim() === '') displayRemark = 'Node';
+        const safeProto = escapeHtml(proto);
+        const safeRemarkText = escapeHtml(displayRemark);
+        const safeRemarkAttr = escapeAttr(displayRemark);
+
+        let healthTitle = '';
+        if (p.lastTestAt) {
+            const timeStr = new Date(p.lastTestAt).toLocaleString();
+            const okStr = p.lastTestOk ? 'OK' : 'FAIL';
+            const codeStr = p.lastTestCode ? ` [${p.lastTestCode}]` : '';
+            const msgStr = p.lastTestMsg ? ` - ${p.lastTestMsg}` : '';
+            healthTitle = `${okStr}${codeStr} @ ${timeStr}${msgStr}`;
+        }
+        const healthDot = p.lastTestAt ? `<span title="${escapeAttr(healthTitle)}" style="display:inline-block; width:7px; height:7px; border-radius:50%; background:${p.lastTestOk ? '#27ae60' : '#e74c3c'}; margin-left:8px; vertical-align:middle;"></span>` : '';
+
+        let ipBadge = '';
+        if (p.ipInfo && (p.ipInfo.country || p.ipInfo.timezone || p.ipInfo.ip)) {
+            const parts = [];
+            if (p.ipInfo.ip) parts.push(p.ipInfo.ip);
+            if (p.ipInfo.country) parts.push(p.ipInfo.country);
+            if (p.ipInfo.timezone) parts.push(p.ipInfo.timezone);
+            const text = parts.join(' · ');
+            ipBadge = `<div class="proxy-sub" style="margin-top:4px; font-size:11px; color: var(--text-secondary);" title="${escapeAttr(text)}">${escapeHtml(text)}</div>`;
+        }
 
         div.innerHTML = `
             <div class="proxy-left">${inputHtml}</div>
             <div class="proxy-mid">
-                <div class="proxy-header"><span class="proxy-proto">${proto}</span><span class="proxy-remark" title="${displayRemark}">${displayRemark}</span>${latHtml}</div>
+                <div class="proxy-header"><span class="proxy-proto">${safeProto}</span><span class="proxy-remark" title="${safeRemarkAttr}">${safeRemarkText}</span>${latHtml}${healthDot}</div>
+                ${ipBadge}
             </div>
             <div class="proxy-right">
                 <button class="outline no-drag" onclick="testSingleProxy('${p.id}')">${t('btnTest')}</button>
@@ -1087,26 +1557,122 @@ async function deleteSubscription() {
 
 async function updateSubscriptionNodes(sub) {
     try {
-        const content = await window.electronAPI.invoke('fetch-url', sub.url);
-        let decoded = content;
-        try { if (!content.includes('://')) decoded = decodeBase64Content(content); } catch (e) { }
-        const lines = decoded.split(/[\r\n]+/);
-        globalSettings.preProxies = globalSettings.preProxies.filter(p => p.groupId !== sub.id);
-        let count = 0;
-        lines.forEach(line => {
-            line = line.trim();
-            if (line && line.includes('://')) {
-                const remark = getProxyRemark(line) || `Node ${count + 1}`;
-                function uuidv4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }
-                globalSettings.preProxies.push({ id: uuidv4(), remark, url: line, enable: true, groupId: sub.id });
-                count++;
-            }
+        const fetched = await window.electronAPI.invoke('fetch-url-conditional', { url: sub.url, etag: sub.etag, lastModified: sub.lastModified });
+        if (fetched && fetched.notModified) {
+            sub.lastUpdated = Date.now();
+            showToast(`${t('msgSubUpdated')} ${sub.name} (Not Modified)`, 2000);
+            return;
+        }
+        if (!fetched || fetched.error) throw new Error((fetched && fetched.error) ? fetched.error : 'Fetch failed');
+        sub.etag = fetched.etag || sub.etag;
+        sub.lastModified = fetched.lastModified || sub.lastModified;
+
+        // Snapshot previous node list for rollback (keep last N snapshots)
+        try {
+            if (!sub.snapshots) sub.snapshots = [];
+            const prevNodes = (globalSettings.preProxies || []).filter(p => p && p.groupId === sub.id).map(p => ({
+                id: p.id,
+                remark: p.remark,
+                url: p.url,
+                enable: p.enable,
+                groupId: p.groupId,
+                latency: p.latency,
+                lastTestMsg: p.lastTestMsg,
+                lastTestCore: p.lastTestCore,
+                lastTestCoreSwitched: p.lastTestCoreSwitched,
+                ipInfo: p.ipInfo,
+                lastIpAt: p.lastIpAt
+            }));
+            sub.snapshots.unshift({
+                at: Date.now(),
+                etag: sub.etag || null,
+                lastModified: sub.lastModified || null,
+                count: prevNodes.length,
+                nodes: prevNodes
+            });
+            if (sub.snapshots.length > 5) sub.snapshots = sub.snapshots.slice(0, 5);
+        } catch (e) { }
+
+        const result = await window.electronAPI.invoke('parse-subscription', { content: fetched.content, hintType: sub.defaultScheme || 'auto' });
+        if (!result || (result.errors && result.errors.length > 0 && (!result.nodes || result.nodes.length === 0))) {
+            const e = formatResultError(result, 'Parse failed');
+            const msg = (e.code ? `[${e.code}] ` : '') + e.message;
+            throw new Error(msg);
+        }
+
+        // Replace nodes for this group using stable node.id (dedupe inside same subscription)
+        const existing = new Map();
+        (globalSettings.preProxies || []).forEach(p => {
+            if (p && p.groupId === sub.id && p.id) existing.set(p.id, p);
         });
+        globalSettings.preProxies = (globalSettings.preProxies || []).filter(p => p.groupId !== sub.id);
+
+        const seen = new Set();
+        let count = 0;
+        (result.nodes || []).forEach((node, idx) => {
+            const link = node.raw || node.url || '';
+            if (!link || !link.includes('://')) return;
+            const stableId = node.id || null;
+            if (stableId && seen.has(stableId)) return;
+            if (stableId) seen.add(stableId);
+
+            const old = stableId ? existing.get(stableId) : null;
+            const remark = node.name || getProxyRemark(link) || `Node ${idx + 1}`;
+            const enable = old ? (old.enable !== false) : true;
+            const latency = old && typeof old.latency === 'number' ? old.latency : -1;
+            const lastTestMsg = old ? (old.lastTestMsg || '') : '';
+            const lastTestCore = old ? (old.lastTestCore || '') : '';
+            const lastTestCoreSwitched = old ? !!old.lastTestCoreSwitched : false;
+            const ipInfo = old ? (old.ipInfo || null) : null;
+            const lastIpAt = old ? (old.lastIpAt || 0) : 0;
+
+            // Fall back to random uuid if parser didn't provide stable id
+            function uuidv4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }
+            const id = stableId || uuidv4();
+
+            globalSettings.preProxies.push({
+                id,
+                remark,
+                url: link,
+                enable,
+                groupId: sub.id,
+                latency,
+                lastTestMsg,
+                lastTestCore,
+                lastTestCoreSwitched,
+                ipInfo,
+                lastIpAt
+            });
+            count++;
+        });
+
         sub.lastUpdated = Date.now();
-        showAlert(`${t('msgSubUpdated')} ${sub.name} (${count} ${t('msgNodes')})`);
+        sub.lastImportAt = Date.now();
+        sub.lastImportOk = true;
+        sub.lastImportCount = count;
+        showToast(`${t('msgSubUpdated')} ${sub.name} (${count} ${t('msgNodes')})`, 2200);
     } catch (e) {
-        showAlert(`${t('msgUpdateFailed')} ${e.message}`);
+        sub.lastImportAt = Date.now();
+        sub.lastImportOk = false;
+        const err = formatIpcError(e);
+        showAlert(`${t('msgUpdateFailed')}${err.code ? ` [${err.code}]` : ''} ${err.message}`);
     }
+}
+
+async function rollbackSubscriptionNodes(subId) {
+    const sub = (globalSettings.subscriptions || []).find(s => s.id === subId);
+    if (!sub || !sub.snapshots || sub.snapshots.length === 0) {
+        return showAlert('No snapshot to rollback');
+    }
+    const snap = sub.snapshots[0];
+    showConfirm(`Rollback ${sub.name} to snapshot (${new Date(snap.at).toLocaleString()})?`, async () => {
+        globalSettings.preProxies = (globalSettings.preProxies || []).filter(p => p.groupId !== sub.id);
+        (snap.nodes || []).forEach(n => globalSettings.preProxies.push({ ...n }));
+        sub.lastUpdated = Date.now();
+        await window.electronAPI.saveSettings(globalSettings);
+        renderProxyNodes();
+        showAlert(`Rolled back: ${sub.name} (${snap.count || 0} nodes)`);
+    });
 }
 
 async function testSingleProxy(id) {
@@ -1115,10 +1681,25 @@ async function testSingleProxy(id) {
     const btn = Array.from(document.querySelectorAll('#preProxyList button.outline')).find(el => el.onclick.toString().includes(id));
     if (btn) btn.innerText = "...";
     try {
-        const res = await window.electronAPI.invoke('test-proxy-latency', p.url);
-        p.latency = res.success ? res.latency : -1;
+        const res = await window.electronAPI.invoke('test-proxy-node', p.url);
+        p.latency = res && res.ok ? (res.connectivity && typeof res.connectivity.latencyMs === 'number' ? res.connectivity.latencyMs : p.latency) : -1;
+        p.lastTestAt = Date.now();
+        p.lastTestOk = Boolean(res && res.ok);
+        p.lastTestCode = res && res.code ? res.code : '';
+        p.lastTestMsg = res && (res.error || (res.connectivity && res.connectivity.error)) ? String(res.error || res.connectivity.error) : '';
+        p.ipInfo = res && res.geo ? res.geo : (res && res.ip ? { ip: res.ip } : null);
+        p.lastIpAt = (res && (res.geo || res.ip)) ? Date.now() : (p.lastIpAt || 0);
+        await window.electronAPI.saveSettings(globalSettings);
         renderProxyNodes();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+        p.lastTestAt = Date.now();
+        p.lastTestOk = false;
+        const err = formatIpcError(e);
+        p.lastTestCode = err.code ? String(err.code) : '';
+        p.lastTestMsg = err.message;
+        await window.electronAPI.saveSettings(globalSettings);
+        renderProxyNodes();
+    }
 }
 
 async function testCurrentGroup() {
@@ -1135,11 +1716,28 @@ async function testCurrentGroup() {
     });
 
     const promises = list.map(async (p) => {
-        const res = await window.electronAPI.invoke('test-proxy-latency', p.url);
-        p.latency = res.success ? res.latency : -1;
-        return p;
+        try {
+            const res = await window.electronAPI.invoke('test-proxy-node', p.url);
+            p.latency = res && res.ok ? (res.connectivity && typeof res.connectivity.latencyMs === 'number' ? res.connectivity.latencyMs : p.latency) : -1;
+            p.lastTestAt = Date.now();
+            p.lastTestOk = Boolean(res && res.ok);
+            p.lastTestCode = res && res.code ? res.code : '';
+            p.lastTestMsg = res && (res.error || (res.connectivity && res.connectivity.error)) ? String(res.error || res.connectivity.error) : '';
+            p.ipInfo = res && res.geo ? res.geo : (res && res.ip ? { ip: res.ip } : null);
+            p.lastIpAt = (res && (res.geo || res.ip)) ? Date.now() : (p.lastIpAt || 0);
+            return p;
+        } catch (e) {
+            p.latency = -1;
+            p.lastTestAt = Date.now();
+            p.lastTestOk = false;
+            const err = formatIpcError(e);
+            p.lastTestCode = err.code ? String(err.code) : '';
+            p.lastTestMsg = err.message;
+            return p;
+        }
     });
     await Promise.all(promises);
+    await window.electronAPI.saveSettings(globalSettings);
     if (globalSettings.mode === 'single') {
         let best = null, min = 99999;
         list.forEach(p => { if (p.latency > 0 && p.latency < min) { min = p.latency; best = p; } });
@@ -1198,7 +1796,10 @@ async function openExportSelectModal(type) {
             const result = await window.electronAPI.invoke('export-selected-data', { type: 'proxies', profileIds: [] });
             if (result.success) showAlert(t('msgExportSuccess'));
             else if (!result.cancelled) showAlert(result.error || t('msgNoData'));
-        } catch (e) { showAlert("Export Failed: " + e.message); }
+        } catch (e) {
+            const err = formatIpcError(e);
+            showAlert((t('msgExportFailed') || 'Export Failed') + (err.code ? ` [${err.code}]` : '') + ': ' + err.message);
+        }
         return;
     }
 
@@ -1250,7 +1851,7 @@ function renderExportProfileList(profiles) {
     let html = '';
     for (const p of profiles) {
         const tagsHtml = (p.tags || []).map(tag =>
-            `<span style="font-size: 9px; padding: 2px 6px; background: ${stringToColor(tag)}22; color: ${stringToColor(tag)}; border-radius: 4px; margin-left: 6px; font-weight: 500;">${tag}</span>`
+            `<span style="font-size: 9px; padding: 2px 6px; background: ${stringToColor(tag)}22; color: ${stringToColor(tag)}; border-radius: 4px; margin-left: 6px; font-weight: 500;">${escapeHtml(tag)}</span>`
         ).join('');
 
         html += `<label style="display: flex; align-items: center; padding: 10px 12px; margin: 4px 0; background: rgba(255,255,255,0.03); border: 1px solid transparent; border-radius: 8px; cursor: pointer; transition: all 0.15s ease;" 
@@ -1260,7 +1861,7 @@ function renderExportProfileList(profiles) {
                 onchange="handleExportCheckboxChange('${p.id}', this.checked)"
                 style="width: 18px; height: 18px; margin-right: 12px; cursor: pointer; accent-color: var(--accent); flex-shrink: 0;">
             <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name || t('expNoProfiles')}</div>
+                <div style="font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.name || t('expNoProfiles'))}</div>
             </div>
             <div style="display: flex; align-items: center; flex-shrink: 0;">${tagsHtml}</div>
         </label>`;
@@ -1484,27 +2085,34 @@ async function importSubscription(url) {
     try {
         const content = await window.electronAPI.invoke('fetch-url', url);
         if (!content) return showAlert(t('subErr'));
-        let decoded = content;
-        try { if (!content.includes('://')) decoded = decodeBase64Content(content); } catch (e) { }
-        const lines = decoded.split(/[\r\n]+/);
+
+        // Use unified subscription parser (supports raw/base64/v2rayN + clash YAML + sing-box JSON)
+        const result = await window.electronAPI.invoke('parse-subscription', { content });
+        if (!result || (result.errors && result.errors.length > 0 && (!result.nodes || result.nodes.length === 0))) {
+            const e = formatResultError(result, t('subErr') || '订阅解析失败');
+            return showAlert((t('subErr') || '订阅解析失败') + (e.code ? ` [${e.code}]` : '') + ': ' + e.message);
+        }
+
         let count = 0;
         if (!globalSettings.preProxies) globalSettings.preProxies = [];
         const groupId = `group-${Date.now()}`;
         const groupName = `Sub ${new Date().toLocaleTimeString()}`;
-        lines.forEach(line => {
-            line = line.trim();
-            if (line && line.includes('://')) {
-                const remark = getProxyRemark(line) || `Node ${count + 1}`;
-                function uuidv4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }
-                globalSettings.preProxies.push({
-                    id: uuidv4(), remark, url: line, enable: true, groupId, groupName
-                });
-                count++;
-            }
+        (result.nodes || []).forEach((node, idx) => {
+            const link = node.raw || node.url || '';
+            if (!link || !link.includes('://')) return;
+            const remark = node.name || getProxyRemark(link) || `Node ${idx + 1}`;
+            function uuidv4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }
+            globalSettings.preProxies.push({
+                id: uuidv4(), remark, url: link, enable: true, groupId, groupName
+            });
+            count++;
         });
         renderProxyNodes(); await window.electronAPI.saveSettings(globalSettings);
         showAlert(`${t('msgImported')} ${count} ${t('msgNodes')}`);
-    } catch (e) { showAlert(t('subErr') + " " + e); }
+    } catch (e) {
+        const err = formatIpcError(e);
+        showAlert((t('subErr') || '订阅解析失败') + (err.code ? ` [${err.code}]` : '') + ': ' + err.message);
+    }
 }
 
 function switchHelpTab(tabName) {
@@ -1522,13 +2130,37 @@ function openSettings() {
     document.getElementById('settingsModal').style.display = 'flex';
     loadUserExtensions();
     loadWatermarkStyle();
+    loadSystemProxySetting();
     loadRemoteDebuggingSetting();
     loadCustomArgsSetting();
     loadApiServerSetting();
     loadDataPathSetting();
+    loadDefaultProxyConsistency();
 }
 function closeSettings() {
     document.getElementById('settingsModal').style.display = 'none';
+}
+
+async function loadDefaultProxyConsistency() {
+    try {
+        const settings = await window.electronAPI.getSettings();
+        const mode = settings.defaultProxyConsistency || 'warn';
+        const el = document.getElementById('defaultProxyConsistency');
+        if (el) el.value = mode;
+    } catch (e) {
+        console.error('Failed to load default proxy consistency:', e);
+    }
+}
+
+async function saveDefaultProxyConsistency(mode) {
+    try {
+        const settings = await window.electronAPI.getSettings();
+        settings.defaultProxyConsistency = mode || 'warn';
+        await window.electronAPI.saveSettings(settings);
+        showToast((t('saved') || 'Saved') + `: ${mode}`, 1400);
+    } catch (e) {
+        showAlert('Error: ' + e.message);
+    }
 }
 
 // Watermark Style Functions
@@ -1630,7 +2262,9 @@ function handleDevToggle(checkbox) {
     }
 
     // Call appropriate save function based on checkbox id
-    if (checkbox.id === 'enableRemoteDebugging') {
+    if (checkbox.id === 'enableSystemProxy') {
+        saveSystemProxySetting(checkbox.checked);
+    } else if (checkbox.id === 'enableRemoteDebugging') {
         saveRemoteDebuggingSetting(checkbox.checked);
     } else if (checkbox.id === 'enableCustomArgs') {
         saveCustomArgsSetting(checkbox.checked);
@@ -1660,6 +2294,48 @@ async function loadRemoteDebuggingSetting() {
         checkbox.checked = settings.enableRemoteDebugging || false;
         updateToggleVisual(checkbox);
     }
+}
+
+// System Proxy (Windows)
+async function saveSystemProxySetting(enabled) {
+    const settings = await window.electronAPI.getSettings();
+    settings.enableSystemProxy = enabled;
+    await window.electronAPI.saveSettings(settings);
+
+    // Apply immediately when possible (needs a running profile with a local proxy port).
+    try {
+        if (!enabled) {
+            const res = await window.electronAPI.setSystemProxyMode(false, null);
+            if (res && res.success) showToast(t('systemProxyDisabled') || 'System proxy disabled');
+            else showToast((t('systemProxyError') || 'System proxy error: ') + (res?.error || 'unknown'));
+            return;
+        }
+
+        const profiles = await window.electronAPI.getProfiles();
+        const running = await window.electronAPI.getRunningIds();
+        const runningId = Array.isArray(running) && running.length > 0 ? running[0] : null;
+        const p = runningId ? profiles.find(x => x.id === runningId) : null;
+        const port = p && p.localPort ? p.localPort : null;
+        if (!runningId || !port) {
+            showToast(t('systemProxyNoRunning') || 'No running profile found (will apply on launch)');
+            return;
+        }
+
+        const endpoint = `127.0.0.1:${port}`;
+        const res = await window.electronAPI.setSystemProxyMode(true, endpoint);
+        if (res && res.success) showToast(t('systemProxyEnabled') || 'System proxy enabled');
+        else showToast((t('systemProxyError') || 'System proxy error: ') + (res?.error || 'unknown'));
+    } catch (e) {
+        showToast((t('systemProxyError') || 'System proxy error: ') + e.message);
+    }
+}
+
+async function loadSystemProxySetting() {
+    const settings = await window.electronAPI.getSettings();
+    const checkbox = document.getElementById('enableSystemProxy');
+    if (!checkbox) return;
+    checkbox.checked = settings.enableSystemProxy || false;
+    updateToggleVisual(checkbox);
 }
 
 // Custom Args Settings
@@ -1694,7 +2370,10 @@ async function saveApiServerSetting(enabled) {
         const result = await window.electronAPI.invoke('start-api-server', { port });
         if (result.success) {
             document.getElementById('apiStatus').style.display = 'inline-block';
-            showAlert(`${t('apiStarted') || 'API 服务已启动'}: http://localhost:${port}`);
+            const tokenEl = document.getElementById('apiTokenInput');
+            if (tokenEl) tokenEl.value = result.token || settings.apiToken || '';
+            const tokenLine = result.token ? `\nX-GeekEZ-API-Token: ${result.token}` : '';
+            showAlert(`${t('apiStarted') || 'API 服务已启动'}: http://localhost:${port}${tokenLine}`);
         } else {
             showAlert((t('apiError') || 'API 启动失败: ') + result.error);
         }
@@ -1702,6 +2381,8 @@ async function saveApiServerSetting(enabled) {
         // Stop API server
         await window.electronAPI.invoke('stop-api-server');
         document.getElementById('apiStatus').style.display = 'none';
+        const tokenEl = document.getElementById('apiTokenInput');
+        if (tokenEl) tokenEl.value = '';
         showAlert(t('apiStopped') || 'API 服务已停止');
     }
 }
@@ -1723,7 +2404,10 @@ async function saveApiPort() {
         await window.electronAPI.invoke('stop-api-server');
         const result = await window.electronAPI.invoke('start-api-server', { port });
         if (result.success) {
-            showAlert(`${t('apiRestarted') || 'API 服务已重启'}: http://localhost:${port}`);
+            const tokenEl = document.getElementById('apiTokenInput');
+            if (tokenEl) tokenEl.value = result.token || settings.apiToken || '';
+            const tokenLine = result.token ? `\nX-GeekEZ-API-Token: ${result.token}` : '';
+            showAlert(`${t('apiRestarted') || 'API 服务已重启'}: http://localhost:${port}${tokenLine}`);
         }
     } else {
         showAlert(t('apiPortSaved') || 'API 端口已保存');
@@ -1751,6 +2435,8 @@ async function loadApiServerSetting() {
     if (portSection) {
         portSection.style.display = settings.enableApiServer ? 'block' : 'none';
     }
+    const tokenEl = document.getElementById('apiTokenInput');
+    if (tokenEl) tokenEl.value = settings.apiToken || '';
 
     // Check if API is running
     try {
@@ -1763,6 +2449,30 @@ async function loadApiServerSetting() {
 
 function openApiDocs() {
     window.electronAPI.invoke('open-url', 'https://browser.geekez.net/docs.html#doc-api');
+}
+
+async function copyApiToken() {
+    const el = document.getElementById('apiTokenInput');
+    const token = el ? String(el.value || '') : '';
+    if (!token) return;
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(token);
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = token;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+        }
+        showToast(t('apiTokenCopied') || 'Copied', 1400);
+    } catch (e) {
+        showAlert((e && e.message) ? e.message : String(e));
+    }
 }
 
 function switchSettingsTab(tabName) {
@@ -1795,22 +2505,40 @@ async function loadUserExtensions() {
     if (!list) return;
 
     if (exts.length === 0) {
-        list.innerHTML = `<div style="opacity:0.5; text-align:center; padding:20px;">${t('settingsExtNoExt')}</div>`;
+        list.innerHTML = `<div style="opacity:0.5; text-align:center; padding:20px;">${escapeHtml(t('settingsExtNoExt'))}</div>`;
         return;
     }
 
-    list.innerHTML = exts.map(ext => {
-        const name = ext.split(/[\\/]/).pop();
-        return `
-            <div class="ext-item">
-                <div>
-                    <div style="font-weight:bold;">${name}</div>
-                    <div style="font-size:11px; opacity:0.6;">${ext}</div>
-                </div>
-                <button class="danger outline" onclick="removeUserExtension('${ext.replace(/\\/g, '\\\\')}')" style="padding:4px 12px; font-size:11px;">${t('settingsExtRemove')}</button>
-            </div>
-        `;
-    }).join('');
+    list.innerHTML = '';
+    exts.forEach((ext) => {
+        const extPath = String(ext ?? '');
+        const name = extPath.split(/[\\/]/).pop() || extPath;
+
+        const item = document.createElement('div');
+        item.className = 'ext-item';
+
+        const left = document.createElement('div');
+        const nameEl = document.createElement('div');
+        nameEl.style.fontWeight = 'bold';
+        nameEl.textContent = name;
+        const pathEl = document.createElement('div');
+        pathEl.style.fontSize = '11px';
+        pathEl.style.opacity = '0.6';
+        pathEl.textContent = extPath;
+        left.appendChild(nameEl);
+        left.appendChild(pathEl);
+
+        const btn = document.createElement('button');
+        btn.className = 'danger outline';
+        btn.style.padding = '4px 12px';
+        btn.style.fontSize = '11px';
+        btn.textContent = t('settingsExtRemove');
+        btn.onclick = async () => { await removeUserExtension(extPath); };
+
+        item.appendChild(left);
+        item.appendChild(btn);
+        list.appendChild(item);
+    });
 }
 async function removeUserExtension(path) {
     await window.electronAPI.invoke('remove-user-extension', path);

@@ -4,6 +4,7 @@ release/
 userData/
 BrowserProfiles/
 _Trash_Bin/
+logs/
 .env
 .DS_Store
 Thumbs.db

@@ -1,5 +1,6 @@
 const { Base64 } = require('js-base64');
 const { URL } = require('url');
+const { normalizeProxySpec } = require('./proxy/proxySpec');
 
 function decodeBase64Content(str) {
     try {
@@ -313,10 +314,22 @@ function parseProxyLink(link, tag) {
     return outbound;
 }
 
+function parseProxySpec(spec, tag) {
+    if (!spec || typeof spec !== 'object') throw new Error('Invalid ProxySpec');
+    if (spec.protocol && spec.protocol !== 'unknown' && spec.protocol !== 'shadowsocks') {
+        // For URL-based and vless/trojan styles, reuse existing parseProxyLink by feeding raw
+        return parseProxyLink(spec.raw, tag);
+    }
+    return parseProxyLink(spec.raw, tag);
+}
+
 function generateXrayConfig(mainProxyStr, localPort, preProxyConfig = null) {
     const outbounds = [];
     let mainOutbound;
-    try { mainOutbound = parseProxyLink(mainProxyStr, "proxy_main"); }
+    try {
+        const spec = normalizeProxySpec(mainProxyStr);
+        mainOutbound = parseProxySpec(spec, "proxy_main");
+    }
     catch (e) { mainOutbound = { protocol: "freedom", tag: "proxy_main" }; }
 
     if (preProxyConfig && preProxyConfig.preProxies && preProxyConfig.preProxies.length > 0) {
@@ -342,4 +355,4 @@ function generateXrayConfig(mainProxyStr, localPort, preProxyConfig = null) {
     };
 }
 
-module.exports = { generateXrayConfig, parseProxyLink, getProxyRemark };
+module.exports = { generateXrayConfig, parseProxyLink, parseProxySpec, getProxyRemark };

@@ -21,6 +21,8 @@
             --splash-bg: #000000;
             --splash-color: #00e0ff;
             --input-bg: #181824;
+            --toast-bg: rgba(0, 0, 0, 0.78);
+            --toast-text: #ffffff;
         }
 
         [data-theme="light"] {
@@ -34,6 +36,8 @@
             --splash-bg: #fff;
             --splash-color: #d63031;
             --input-bg: #f9f9f9;
+            --toast-bg: rgba(0, 0, 0, 0.78);
+            --toast-text: #ffffff;
         }
 
         [data-theme="dark"] {
@@ -47,6 +51,8 @@
             --splash-bg: #121212;
             --splash-color: #66bb6a;
             --input-bg: #2c2c2c;
+            --toast-bg: rgba(0, 0, 0, 0.78);
+            --toast-text: #ffffff;
         }
 
         body {
@@ -1091,6 +1097,11 @@
                     <div class="timezone-dropdown" id="addTimezoneDropdown"></div>
                 </div>
                 <label data-i18n="proxyLink" style="font-size:11px; font-weight:bold; opacity:0.8;">Proxy</label>
+                <label style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Engine</label>
+                <select id="addProxyEngine" class="quick-switch-select no-drag" style="width:100%; margin-bottom:8px;">
+                    <option value="xray" selected>Xray (Recommended)</option>
+                    <option value="sing-box">sing-box</option>
+                </select>
                 <textarea id="addProxy" rows="4" placeholder="vmess://, ss://... (one per line for batch)"
                     spellcheck="false" autocomplete="off"></textarea>
                 <div style="font-size:10px; opacity:0.5; margin-bottom:8px;" data-i18n="batchHint">Multiple links =
@@ -1114,6 +1125,18 @@
                 </div>
                 <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 10px;"
                     data-i18n="autoFingerprint">* Auto Fingerprint</div>
+
+                <label data-i18n="proxyConsistencyMode"
+                    style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:8px; display:block;">Proxy/Fingerprint
+                    Consistency</label>
+                <select id="addProxyConsistency" class="quick-switch-select no-drag" style="width:100%; margin-bottom:6px;">
+                    <option value="warn" selected data-i18n="proxyConsistencyWarn">Warn only</option>
+                    <option value="autofix" data-i18n="proxyConsistencyAutofix">Auto-fix</option>
+                    <option value="block" data-i18n="proxyConsistencyBlock">Block launch</option>
+                </select>
+                <div data-i18n="proxyConsistencyHint" style="font-size:10px; opacity:0.55; margin-bottom:12px;">
+                    When enabled, the app can auto-align fingerprint timezone/geo/locale with proxy geo.
+                </div>
             </div>
             <div class="modal-footer"><button class="outline" onclick="closeAddModal()"
                     data-i18n="cancel">Cancel</button><button onclick="saveNewProfile()"
@@ -1156,7 +1179,44 @@
                 </div>
 
                 <label data-i18n="proxyLink" style="font-size:11px; font-weight:bold; opacity:0.8;">Proxy</label>
+                <label style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Engine</label>
+                <select id="editProxyEngine" class="quick-switch-select no-drag" style="width:100%; margin-bottom:6px;">
+                    <option value="xray" selected>Xray (Recommended)</option>
+                    <option value="sing-box">sing-box</option>
+                </select>
+                <div style="font-size:10px; opacity:0.55; margin-bottom:8px;">Changing engine requires restarting the profile.</div>
                 <textarea id="editProxy" rows="4"></textarea>
+
+                <label data-i18n="proxyConsistencyMode"
+                    style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:10px; display:block;">Proxy/Fingerprint
+                    Consistency</label>
+                <select id="editProxyConsistency" class="quick-switch-select no-drag" style="width:100%; margin-bottom:6px;">
+                    <option value="warn" selected data-i18n="proxyConsistencyWarn">Warn only</option>
+                    <option value="autofix" data-i18n="proxyConsistencyAutofix">Auto-fix</option>
+                    <option value="block" data-i18n="proxyConsistencyBlock">Block launch</option>
+                </select>
+                <div data-i18n="proxyConsistencyHint" style="font-size:10px; opacity:0.55; margin-bottom:8px;">
+                    When enabled, the app can auto-align fingerprint timezone/geo/locale with proxy geo.
+                </div>
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <div style="flex:1">
+                        <label data-i18n="proxyAutofixLang" style="font-size:11px; font-weight:bold; opacity:0.8;">Auto-fix Language</label>
+                        <select id="editProxyAutofixLanguage" class="quick-switch-select no-drag" style="width:100%; margin-bottom:6px;">
+                            <option value="off" selected data-i18n="optOff">Off</option>
+                            <option value="on" data-i18n="optOn">On</option>
+                        </select>
+                    </div>
+                    <div style="flex:1">
+                        <label data-i18n="proxyAutofixGeo" style="font-size:11px; font-weight:bold; opacity:0.8;">Auto-fix Geo</label>
+                        <select id="editProxyAutofixGeo" class="quick-switch-select no-drag" style="width:100%; margin-bottom:6px;">
+                            <option value="off" selected data-i18n="optOff">Off</option>
+                            <option value="on" data-i18n="optOn">On</option>
+                        </select>
+                    </div>
+                </div>
+                <div data-i18n="proxyAutofixHint" style="font-size:10px; opacity:0.55; margin-bottom:8px;">
+                    These options only apply when Consistency is set to Auto-fix. Timezone auto-fix is always allowed.
+                </div>
                 <div style="display:flex; gap:10px;">
                     <div style="flex:1"><label data-i18n="preProxySetting"
                             style="font-size:11px; font-weight:bold; opacity:0.8;">Pre-Proxy</label><select
@@ -1214,6 +1274,7 @@
                 <div id="currentGroupTitle" style="font-weight:bold; font-size:13px; color:var(--accent);">Manual</div>
                 <div style="display:flex; gap:10px;"><button class="outline" onclick="testCurrentGroup()"
                         data-i18n="btnTestGroup" style="font-size:11px;">⚡ Test All</button><button class="outline"
+                        id="btnRollbackSub" onclick="rollbackSubscriptionNodes(currentProxyGroup)" style="font-size:11px; display:none;">↩ Rollback</button><button class="outline"
                         id="btnEditSub" onclick="editCurrentSubscription()" style="font-size:11px; display:none;">✎ Edit
                         Sub</button><button class="outline" onclick="openSubEditModal(true)" data-i18n="btnImportSub"
                         style="font-size:11px;">+ New Sub</button></div>
@@ -1350,9 +1411,11 @@
             <div class="modal-header" style="justify-content: center; border: none;"><span
                     style="color: var(--danger); font-size: 40px;">⚠</span></div>
             <p id="confirmMsg" style="margin: 10px 0 20px;">Msg</p>
-            <div style="display: flex; justify-content: center; gap: 15px;"><button class="outline"
-                    onclick="closeConfirm(false)">Cancel</button><button class="danger"
-                    onclick="closeConfirm(true)">Confirm</button></div>
+            <div style="display: flex; justify-content: center; gap: 15px;">
+                <button class="outline" onclick="closeConfirm(false)">Cancel</button>
+                <button id="confirmAltBtn" class="outline" style="display:none;" onclick="closeConfirm('alt')">Alt</button>
+                <button id="confirmOkBtn" class="danger" onclick="closeConfirm(true)">Confirm</button>
+            </div>
         </div>
     </div>
     <div id="alertModal" class="modal-overlay" style="z-index: 2001;">
@@ -1361,6 +1424,28 @@
                     style="color: var(--accent); font-size: 30px;">ℹ</span></div>
             <p id="alertMsg" style="margin: 10px 0 20px;">Msg</p><button id="alertBtn"
                 onclick="document.getElementById('alertModal').style.display='none'">OK</button>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" style="position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--toast-bg); color:var(--toast-text); padding:10px 14px; border-radius:10px; font-size:12px; z-index:3000; display:none; max-width: 80vw; box-shadow: 0 8px 30px rgba(0,0,0,0.35);"></div>
+
+    <!-- Rotated Logs Modal -->
+    <div id="rotatedLogsModal" class="modal-overlay" style="z-index: 2002; display:none;">
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header" style="justify-content: space-between;">
+                <span data-i18n="rotatedLogsTitle">Rotated Logs</span>
+                <span style="cursor:pointer" onclick="closeRotatedLogsModal()">✕</span>
+            </div>
+            <div class="modal-body">
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <input id="rotatedLogsSearch" type="text" data-i18n-placeholder="rotatedLogsFilter" placeholder="Filter..." style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.2); color: var(--text);" oninput="filterRotatedLogs()" />
+                </div>
+                <div id="rotatedLogsList" style="max-height: 360px; overflow:auto;"></div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button class="outline" data-i18n="done" onclick="closeRotatedLogsModal()">Done</button>
+            </div>
         </div>
     </div>
     <!-- Settings Modal -->
@@ -1397,6 +1482,21 @@
                     <h3 style="margin-bottom:15px; color:var(--accent);" data-i18n="settingsAdvTitle">Advanced Settings
                     </h3>
 
+                    <!-- Default Consistency Policy -->
+                    <div style="margin-bottom: 25px;">
+                        <h4 style="margin-bottom:10px; color:var(--text-primary); font-size:14px;"
+                            data-i18n="proxyConsistencyGlobalTitle">Default Consistency Policy</h4>
+                        <p style="font-size:12px; opacity:0.7; margin-bottom:12px;" data-i18n="proxyConsistencyGlobalDesc">
+                            Applies to new profiles and profiles without override.
+                        </p>
+                        <select id="defaultProxyConsistency" class="quick-switch-select no-drag"
+                            style="width:100%; margin-bottom:6px;" onchange="saveDefaultProxyConsistency(this.value)">
+                            <option value="warn" selected data-i18n="proxyConsistencyWarn">Warn only</option>
+                            <option value="autofix" data-i18n="proxyConsistencyAutofix">Auto-fix</option>
+                            <option value="block" data-i18n="proxyConsistencyBlock">Block launch</option>
+                        </select>
+                    </div>
+
                     <!-- Developer Features - Unified Tech Style -->
                     <div style="margin-bottom: 25px;">
                         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
@@ -1411,6 +1511,29 @@
 
                         <div
                             style="border:1px solid var(--border); border-radius:12px; padding:4px; background:var(--card-bg);">
+
+                            <!-- System Proxy Toggle (Windows) -->
+                            <label class="dev-toggle-item"
+                                style="display:flex; align-items:center; gap:14px; padding:14px 16px; cursor:pointer; border-radius:8px; transition:all 0.2s;">
+                                <div class="toggle-switch"
+                                    style="position:relative; width:44px; height:24px; flex-shrink:0;">
+                                    <input type="checkbox" id="enableSystemProxy"
+                                        style="opacity:0; width:0; height:0; position:absolute;"
+                                        onchange="handleDevToggle(this)">
+                                    <div class="toggle-track"
+                                        style="position:absolute; inset:0; background:var(--border); border-radius:12px; transition:0.3s;">
+                                    </div>
+                                    <div class="toggle-knob"
+                                        style="position:absolute; top:2px; left:2px; width:20px; height:20px; background:#fff; border-radius:50%; transition:0.3s; box-shadow:0 2px 4px rgba(0,0,0,0.2);">
+                                    </div>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="font-size:13px; font-weight:500; color:var(--text-primary);"
+                                        data-i18n="systemProxyToggle">🌐 系统代理模式</div>
+                                    <div style="font-size:11px; color:var(--text-secondary); opacity:0.8;"
+                                        data-i18n="systemProxyToggleHint">启用后将系统出网代理指向当前运行环境的本地 SOCKS 端口（Windows）</div>
+                                </div>
+                            </label>
 
                             <!-- Remote Debugging Toggle -->
                             <label class="dev-toggle-item"
@@ -1501,6 +1624,16 @@
                                     <a href="#" onclick="openApiDocs(); return false;"
                                         style="font-size:11px; color:var(--accent); margin-left:auto;"
                                         data-i18n="apiDocs">📄 Docs</a>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                                    <code style="font-size:11px; color:var(--text-secondary);">X-GeekEZ-API-Token</code>
+                                    <input type="text" id="apiTokenInput" readonly
+                                        style="flex:1; min-width:240px; max-width:520px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text-primary); font-size:11px;">
+                                    <button class="outline" onclick="copyApiToken()" style="padding:6px 14px; font-size:11px;" data-i18n="apiTokenCopy">Copy</button>
+                                </div>
+                                <div style="font-size:10px; color:var(--text-secondary); opacity:0.8; margin-top:6px; line-height:1.4;">
+                                    <span data-i18n="apiTokenHint">Send this token via HTTP header:</span>
+                                    <code style="color:var(--accent);">X-GeekEZ-API-Token</code>
                                 </div>
                             </div>
                         </div>

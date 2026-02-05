@@ -21,7 +21,9 @@ const gunzip = promisify(zlib.gunzip);
 // Only disable if GPU compatibility issues occur
 
 const { generateXrayConfig } = require('./utils');
-const { generateFingerprint, getInjectScript } = require('./fingerprint');
+const { generateFingerprint, normalizeFingerprintSpec, getInjectScript } = require('./fingerprint');
+const { normalizeProxySpec } = require('./proxy/proxySpec');
+const { buildSingboxConfigFromProxySpec } = require('./proxy/singboxConfig');
 
 const isDev = !app.isPackaged;
 const RESOURCES_BIN = isDev ? path.join(__dirname, 'resources', 'bin') : path.join(process.resourcesPath, 'bin');
@@ -32,6 +34,8 @@ const BIN_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'xray.exe' : 
 // Fallback to old location for backward compatibility
 const BIN_DIR_LEGACY = RESOURCES_BIN;
 const BIN_PATH_LEGACY = path.join(BIN_DIR_LEGACY, process.platform === 'win32' ? 'xray.exe' : 'xray');
+
+const SINGBOX_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'sing-box.exe' : 'sing-box');
 
 // 自定义数据目录支持
 const APP_CONFIG_FILE = path.join(app.getPath('userData'), 'app-config.json');
@@ -63,20 +67,119 @@ fs.ensureDirSync(TRASH_PATH);
 let activeProcesses = {};
 let apiServer = null;
 let apiServerRunning = false;
+let apiServerToken = null;
 let mainWindow = null; // Global reference for API-to-UI communication
+
+function getProxyEngineFromProfile(profile) {
+    return profile.proxyEngine || (profile.fingerprint && profile.fingerprint.proxyEngine) || 'xray';
+}
+
+async function startProxyEngine(profile, localPort, configPath, logFd) {
+    const engine = getProxyEngineFromProfile(profile);
+    const proxyStr = profile.proxyStr || '';
+
+    if (engine === 'xray') {
+        const finalPreProxyConfig = profile.preProxyConfig || null;
+        const config = generateXrayConfig(proxyStr, localPort, finalPreProxyConfig);
+        fs.writeJsonSync(configPath, config);
+        const xrayProcess = spawn(BIN_PATH, ['-c', configPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: ['ignore', logFd, logFd], windowsHide: true });
+        return { engine: 'xray', pid: xrayProcess.pid, process: xrayProcess };
+    }
+
+    if (engine === 'sing-box') {
+        if (!fs.existsSync(SINGBOX_PATH)) {
+            const err = new Error('sing-box binary not found');
+            err.code = 'SINGBOX_BINARY_MISSING';
+            throw err;
+        }
+        const spec = normalizeProxySpec(proxyStr);
+        const sbConfig = buildSingboxConfigFromProxySpec(spec, localPort);
+        fs.writeJsonSync(configPath, sbConfig);
+        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: { ...process.env }, stdio: ['ignore', logFd, logFd], windowsHide: true });
+        return { engine: 'sing-box', pid: sbProcess.pid, process: sbProcess };
+    }
+
+    throw new Error(`Proxy engine not supported: ${engine}`);
+}
 
 // ============================================================================
 // REST API Server
 // ============================================================================
+const API_TOKEN_HEADER = 'x-geekez-api-token';
+const API_BODY_MAX_BYTES = 1024 * 1024; // 1MB
+
+function isAllowedApiCorsOrigin(origin) {
+    // Renderer is loaded via file:// so Origin is "null".
+    return origin === 'null';
+}
+
+function getApiTokenFromRequest(req) {
+    const direct = req && req.headers ? req.headers[API_TOKEN_HEADER] : null;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+    const auth = req && req.headers ? req.headers['authorization'] : null;
+    if (typeof auth === 'string') {
+        const m = auth.match(/^Bearer\s+(.+)$/i);
+        if (m && m[1]) return m[1].trim();
+    }
+    return null;
+}
+
+async function ensureApiTokenInSettings() {
+    const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
+    const existing = typeof settings.apiToken === 'string' ? settings.apiToken.trim() : '';
+    if (existing) return existing;
+
+    const token = crypto.randomBytes(24).toString('base64url');
+    settings.apiToken = token;
+    await fs.writeJson(SETTINGS_FILE, settings, { spaces: 2 });
+    return token;
+}
+
+function readBodyWithLimit(req, maxBytes) {
+    return new Promise((resolve, reject) => {
+        let data = '';
+        let bytes = 0;
+
+        req.on('data', (chunk) => {
+            bytes += chunk.length;
+            if (bytes > maxBytes) {
+                const err = new Error('Request body too large');
+                err.code = 'API_BODY_TOO_LARGE';
+                try { req.destroy(err); } catch (e) { }
+                reject(err);
+                return;
+            }
+            data += chunk.toString();
+        });
+        req.on('end', () => resolve(data));
+        req.on('error', reject);
+    });
+}
+
 function createApiServer(port) {
     const server = http.createServer(async (req, res) => {
-        // CORS headers
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        const origin = req.headers.origin;
+
+        // CORS: only allow file:// (Origin: null). Non-browser clients typically have no Origin.
+        if (origin && isAllowedApiCorsOrigin(origin)) {
+            res.setHeader('Access-Control-Allow-Origin', origin);
+            res.setHeader('Vary', 'Origin');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-GeekEZ-API-Token');
+        } else {
+            // Do not set ACAO for other origins.
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-GeekEZ-API-Token');
+        }
         res.setHeader('Content-Type', 'application/json');
 
         if (req.method === 'OPTIONS') {
+            if (origin && !isAllowedApiCorsOrigin(origin)) {
+                res.writeHead(403);
+                res.end(JSON.stringify({ success: false, error: 'CORS origin not allowed' }));
+                return;
+            }
             res.writeHead(200);
             res.end();
             return;
@@ -86,14 +189,32 @@ function createApiServer(port) {
         const pathname = url.pathname;
         const method = req.method;
 
+        // Auth: require token for all /api/* endpoints.
+        if (pathname.startsWith('/api/')) {
+            if (!apiServerToken) {
+                res.writeHead(500);
+                res.end(JSON.stringify({ success: false, error: 'API token not initialized' }));
+                return;
+            }
+            const token = getApiTokenFromRequest(req);
+            if (!token || token !== apiServerToken) {
+                res.writeHead(401);
+                res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+                return;
+            }
+        }
+
         // Parse body for POST/PUT
         let body = '';
         if (method === 'POST' || method === 'PUT') {
-            body = await new Promise(resolve => {
-                let data = '';
-                req.on('data', chunk => data += chunk);
-                req.on('end', () => resolve(data));
-            });
+            try {
+                body = await readBodyWithLimit(req, API_BODY_MAX_BYTES);
+            } catch (err) {
+                const status = err && err.code === 'API_BODY_TOO_LARGE' ? 413 : 400;
+                res.writeHead(status);
+                res.end(JSON.stringify({ success: false, error: err && err.message ? err.message : 'Bad Request' }));
+                return;
+            }
         }
 
         try {
@@ -149,7 +270,8 @@ async function handleApiRequest(method, pathname, body, params) {
 
     // POST /api/profiles - Create with unique name
     if (method === 'POST' && pathname === '/api/profiles') {
-        const data = JSON.parse(body);
+        let data = {};
+        try { data = body ? JSON.parse(body) : {}; } catch (e) { return { status: 400, data: { success: false, error: 'Invalid JSON body' } }; }
         const id = uuidv4();
         const fingerprint = await generateFingerprint({});
         const baseName = data.name || `Profile-${Date.now()}`;
@@ -173,7 +295,8 @@ async function handleApiRequest(method, pathname, body, params) {
         const profile = findProfile(decodeURIComponent(profileMatch[1]));
         if (!profile) return { status: 404, data: { success: false, error: 'Profile not found' } };
         const idx = profiles.findIndex(p => p.id === profile.id);
-        const data = JSON.parse(body);
+        let data = {};
+        try { data = body ? JSON.parse(body) : {}; } catch (e) { return { status: 400, data: { success: false, error: 'Invalid JSON body' } }; }
         // If name changed, ensure uniqueness
         if (data.name && data.name !== profile.name) {
             data.name = generateUniqueName(data.name);
@@ -213,9 +336,13 @@ async function handleApiRequest(method, pathname, body, params) {
         if (!profile) return { status: 404, data: { success: false, error: 'Profile not found' } };
         const proc = activeProcesses[profile.id];
         if (!proc) return { status: 404, data: { success: false, error: 'Profile not running' } };
-        await forceKill(proc.xrayPid);
-        await forceKill(proc.chromePid);
+        try { await forceKill(getProxyPid(proc)); } catch (e) { }
+        try { if (proc.browser) await proc.browser.close(); } catch (e) { }
+        if (proc.logFd !== undefined) {
+            try { fs.closeSync(proc.logFd); } catch (e) { }
+        }
         delete activeProcesses[profile.id];
+        try { await autoClearSystemProxyIfEnabled(); } catch (e) { }
         return { success: true, message: 'Profile stopped' };
     }
 
@@ -358,14 +485,19 @@ ipcMain.handle('start-api-server', async (e, { port }) => {
         return { success: false, error: 'API server already running' };
     }
     try {
-        apiServer = createApiServer(port);
+        const resolvedPort = Number(port);
+        if (!Number.isInteger(resolvedPort) || resolvedPort < 1024 || resolvedPort > 65535) {
+            return { success: false, error: 'Invalid port' };
+        }
+        apiServerToken = await ensureApiTokenInSettings();
+        apiServer = createApiServer(resolvedPort);
         await new Promise((resolve, reject) => {
-            apiServer.listen(port, '127.0.0.1', () => resolve());
+            apiServer.listen(resolvedPort, '127.0.0.1', () => resolve());
             apiServer.on('error', reject);
         });
         apiServerRunning = true;
-        console.log(`🔌 API Server started on http://localhost:${port}`);
-        return { success: true, port };
+        console.log(`🔌 API Server started on http://localhost:${resolvedPort}`);
+        return { success: true, port: resolvedPort, token: apiServerToken };
     } catch (err) {
         return { success: false, error: err.message };
     }
@@ -377,6 +509,7 @@ ipcMain.handle('stop-api-server', async () => {
         apiServer.close(() => {
             apiServer = null;
             apiServerRunning = false;
+            apiServerToken = null;
             console.log('🔌 API Server stopped');
             resolve({ success: true });
         });
@@ -384,7 +517,7 @@ ipcMain.handle('stop-api-server', async () => {
 });
 
 ipcMain.handle('get-api-status', () => {
-    return { running: apiServerRunning };
+    return { running: apiServerRunning, tokenSet: !!apiServerToken };
 });
 
 
@@ -466,6 +599,38 @@ function notifyUIRefresh() {
     }
 }
 
+function getDefaultSystemProxyBypassList() {
+    return ['<local>', 'localhost', '127.0.0.1', '::1'];
+}
+
+async function applySystemProxyMode({ enable, endpoint }) {
+    if (process.platform !== 'win32') {
+        const err = new Error('System proxy mode currently supported on Windows only');
+        err.code = 'SYSTEM_PROXY_UNSUPPORTED_PLATFORM';
+        throw err;
+    }
+    const { setSystemProxySocks, clearSystemProxy } = require('./proxy/systemProxyWin');
+    if (!enable) return clearSystemProxy();
+    return setSystemProxySocks({ endpoint, bypassList: getDefaultSystemProxyBypassList() });
+}
+
+async function autoApplySystemProxyForRunningProfile({ profileId, localPort }) {
+    try {
+        const settings = await fs.readJson(SETTINGS_FILE).catch(() => ({}));
+        if (!settings.enableSystemProxy) return;
+        if (!localPort) return;
+        await applySystemProxyMode({ enable: true, endpoint: `127.0.0.1:${localPort}` });
+    } catch (e) { }
+}
+
+async function autoClearSystemProxyIfEnabled() {
+    try {
+        const settings = await fs.readJson(SETTINGS_FILE).catch(() => ({}));
+        if (!settings.enableSystemProxy) return;
+        await applySystemProxyMode({ enable: false });
+    } catch (e) { }
+}
+
 async function generateExtension(profilePath, fingerprint, profileName, watermarkStyle) {
     const extDir = path.join(profilePath, 'extension');
     await fs.ensureDir(extDir);
@@ -490,7 +655,57 @@ app.whenReady().then(async () => {
 
 // IPC Handles
 ipcMain.handle('get-app-info', () => { return { name: app.getName(), version: app.getVersion() }; });
-ipcMain.handle('fetch-url', async (e, url) => { try { const res = await fetch(url); if (!res.ok) throw new Error('HTTP ' + res.status); return await res.text(); } catch (e) { throw e.message; } });
+function parseHttpUrlOrThrow(url) {
+    if (typeof url !== 'string' || !url.trim()) throw new Error('Invalid URL');
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        throw new Error('Only http/https URLs are allowed');
+    }
+    return u;
+}
+ipcMain.handle('fetch-url', async (e, url) => {
+    try {
+        const u = parseHttpUrlOrThrow(url);
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 20_000);
+        const res = await fetch(u.toString(), { signal: ac.signal });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return await res.text();
+    } catch (e) {
+        throw (e && e.message) ? e.message : String(e);
+    }
+});
+ipcMain.handle('fetch-url-conditional', async (e, { url, etag, lastModified }) => {
+    try {
+        const u = parseHttpUrlOrThrow(url);
+        const headers = {};
+        if (etag) headers['If-None-Match'] = String(etag);
+        if (lastModified) headers['If-Modified-Since'] = String(lastModified);
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 20_000);
+        const res = await fetch(u.toString(), { headers, signal: ac.signal });
+        clearTimeout(timer);
+        if (res.status === 304) {
+            return { notModified: true };
+        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const text = await res.text();
+        const newEtag = res.headers.get('etag');
+        const newLastModified = res.headers.get('last-modified');
+        return { notModified: false, content: text, etag: newEtag, lastModified: newLastModified };
+    } catch (err) {
+        return { notModified: false, error: err && err.message ? err.message : String(err) };
+    }
+});
+ipcMain.handle('parse-subscription', async (e, { content, hintType }) => {
+    try {
+        const { parseSubscriptionContent } = require('./proxy/subscription');
+        return parseSubscriptionContent(content, hintType || 'auto');
+    } catch (err) {
+        return { detectedType: 'unknown', decoded: String(content || ''), nodes: [], stats: { totalLines: 0, totalNodes: 0, skippedLines: 0, decodeAttempted: false }, errors: [err && err.message ? err.message : String(err)] };
+    }
+});
 ipcMain.handle('test-proxy-latency', async (e, proxyStr) => {
     const tempPort = await getPort(); const tempConfigPath = path.join(app.getPath('userData'), `test_config_${tempPort}.json`);
     try {
@@ -509,6 +724,155 @@ ipcMain.handle('test-proxy-latency', async (e, proxyStr) => {
         await forceKill(xrayProcess.pid); try { fs.unlinkSync(tempConfigPath); } catch (e) { } return result;
     } catch (err) { return { success: false, msg: err.message }; }
 });
+
+ipcMain.handle('test-proxy-node', async (e, proxyStr) => {
+    const tempPort = await getPort();
+    const tempConfigPath = path.join(app.getPath('userData'), `test_config_${tempPort}.json`);
+    const startedAt = Date.now();
+    let xrayProcess = null;
+
+    try {
+        let outbound;
+        try { const { parseProxyLink } = require('./utils'); outbound = parseProxyLink(proxyStr, "proxy_test"); }
+        catch (err) { return { success: false, ok: false, error: "Format Err", code: "PROXY_TEST_FORMAT_ERR" }; }
+
+        const config = { log: { loglevel: "none" }, inbounds: [{ port: tempPort, listen: "127.0.0.1", protocol: "socks", settings: { udp: true } }], outbounds: [outbound, { protocol: "freedom", tag: "direct" }], routing: { rules: [{ type: "field", outboundTag: "proxy_test", port: "0-65535" }] } };
+        await fs.writeJson(tempConfigPath, config);
+        xrayProcess = spawn(BIN_PATH, ['-c', tempConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: 'ignore', windowsHide: true });
+        await new Promise(r => setTimeout(r, 800));
+
+        const agent = new SocksProxyAgent(`socks5://127.0.0.1:${tempPort}`);
+
+        const latencyStart = Date.now();
+        const connectivity = await new Promise((resolve) => {
+            const req = http.get('http://cp.cloudflare.com/generate_204', { agent, timeout: 7000 }, (res) => {
+                const latencyMs = Date.now() - latencyStart;
+                if (res.statusCode === 204) resolve({ ok: true, latencyMs });
+                else resolve({ ok: false, latencyMs, error: `HTTP ${res.statusCode}` });
+            });
+            req.on('error', (err) => resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: err.message }));
+            req.on('timeout', () => { req.destroy(); resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: "Timeout" }); });
+        });
+
+        const { probePublicIp, probeGeo } = require('./proxy/test');
+        let publicIp = null;
+        let geo = null;
+        try { publicIp = await probePublicIp(8000); } catch (e) { }
+        try { geo = await probeGeo(8000); } catch (e) { }
+
+        const ip = (geo && geo.ip) ? geo.ip : publicIp;
+        const geoOut = geo ? {
+            country: geo.country, region: geo.region, city: geo.city,
+            asn: geo.asn, isp: geo.isp, timezone: geo.timezone,
+            latitude: geo.latitude, longitude: geo.longitude,
+        } : null;
+
+        const ok = Boolean(connectivity.ok);
+        return { success: ok, ok, startedAt, durationMs: Date.now() - startedAt, connectivity, ip, geo: geoOut };
+    } catch (err) {
+        return { success: false, ok: false, startedAt, durationMs: Date.now() - startedAt, error: err.message, code: "PROXY_TEST_INTERNAL_ERROR" };
+    } finally {
+        try { if (xrayProcess && xrayProcess.pid) await forceKill(xrayProcess.pid); } catch (e) { }
+        try { if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath); } catch (e) { }
+    }
+});
+
+async function testProxyNodeInternal(proxyStr) {
+    const tempPort = await getPort();
+    const tempConfigPath = path.join(app.getPath('userData'), `test_config_${tempPort}.json`);
+    const startedAt = Date.now();
+    let xrayProcess = null;
+
+    try {
+        let outbound;
+        try { const { parseProxyLink } = require('./utils'); outbound = parseProxyLink(proxyStr, "proxy_test"); }
+        catch (err) { return { success: false, ok: false, error: "Format Err", code: "PROXY_TEST_FORMAT_ERR" }; }
+
+        const config = { log: { loglevel: "none" }, inbounds: [{ port: tempPort, listen: "127.0.0.1", protocol: "socks", settings: { udp: true } }], outbounds: [outbound, { protocol: "freedom", tag: "direct" }], routing: { rules: [{ type: "field", outboundTag: "proxy_test", port: "0-65535" }] } };
+        await fs.writeJson(tempConfigPath, config);
+        xrayProcess = spawn(BIN_PATH, ['-c', tempConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: 'ignore', windowsHide: true });
+        await new Promise(r => setTimeout(r, 800));
+
+        const agent = new SocksProxyAgent(`socks5://127.0.0.1:${tempPort}`);
+
+        const latencyStart = Date.now();
+        const connectivity = await new Promise((resolve) => {
+            const req = http.get('http://cp.cloudflare.com/generate_204', { agent, timeout: 7000 }, (res) => {
+                const latencyMs = Date.now() - latencyStart;
+                if (res.statusCode === 204) resolve({ ok: true, latencyMs });
+                else resolve({ ok: false, latencyMs, error: `HTTP ${res.statusCode}` });
+            });
+            req.on('error', (err) => resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: err.message }));
+            req.on('timeout', () => { req.destroy(); resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: "Timeout" }); });
+        });
+
+        const { probePublicIp, probeGeo } = require('./proxy/test');
+        let publicIp = null;
+        let geo = null;
+        try { publicIp = await probePublicIp(8000); } catch (e) { }
+        try { geo = await probeGeo(8000); } catch (e) { }
+
+        const ip = (geo && geo.ip) ? geo.ip : publicIp;
+        const geoOut = geo ? {
+            country: geo.country, region: geo.region, city: geo.city,
+            asn: geo.asn, isp: geo.isp, timezone: geo.timezone,
+            latitude: geo.latitude, longitude: geo.longitude,
+        } : null;
+
+        const ok = Boolean(connectivity.ok);
+        return { success: ok, ok, startedAt, durationMs: Date.now() - startedAt, connectivity, ip, geo: geoOut };
+    } catch (err) {
+        return { success: false, ok: false, startedAt, durationMs: Date.now() - startedAt, error: err.message, code: "PROXY_TEST_INTERNAL_ERROR" };
+    } finally {
+        try { if (xrayProcess && xrayProcess.pid) await forceKill(xrayProcess.pid); } catch (e) { }
+        try { if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath); } catch (e) { }
+    }
+}
+
+async function applyCdpOverridesToPage(page, fingerprint) {
+    const fp = normalizeFingerprintSpec(fingerprint);
+    const cdp = fp.cdp || {};
+    const session = await page.target().createCDPSession();
+
+    // Enable relevant domains (safe no-ops if already enabled)
+    try { await session.send('Network.enable'); } catch (e) { }
+    try { await session.send('Emulation.clearGeolocationOverride'); } catch (e) { }
+
+    // Timezone
+    if (cdp.timezoneId && cdp.timezoneId !== 'Auto') {
+        try { await session.send('Emulation.setTimezoneOverride', { timezoneId: cdp.timezoneId }); } catch (e) { }
+    }
+
+    // Locale / Accept-Language exposure via CDP
+    if (cdp.locale && cdp.locale !== 'auto') {
+        try { await session.send('Emulation.setLocaleOverride', { locale: cdp.locale }); } catch (e) { }
+    }
+
+    // Geolocation
+    if (cdp.geolocation && typeof cdp.geolocation === 'object') {
+        const { latitude, longitude, accuracy } = cdp.geolocation;
+        if (typeof latitude === 'number' && typeof longitude === 'number') {
+            try {
+                await session.send('Emulation.setGeolocationOverride', {
+                    latitude,
+                    longitude,
+                    accuracy: typeof accuracy === 'number' ? accuracy : 100
+                });
+            } catch (e) { }
+        }
+    }
+
+    // UA + UA-CH metadata (+ Accept-Language header)
+    if (cdp.userAgent || cdp.userAgentMetadata || cdp.locale) {
+        const payload = {};
+        if (cdp.userAgent) payload.userAgent = cdp.userAgent;
+        if (cdp.userAgentMetadata) payload.userAgentMetadata = cdp.userAgentMetadata;
+        if (cdp.locale) payload.acceptLanguage = cdp.locale;
+        try { await session.send('Network.setUserAgentOverride', payload); } catch (e) { }
+    }
+
+    return session;
+}
 ipcMain.handle('set-title-bar-color', (e, colors) => { const win = BrowserWindow.fromWebContents(e.sender); if (win) { if (process.platform === 'win32') try { win.setTitleBarOverlay({ color: colors.bg, symbolColor: colors.symbol }); } catch (e) { } win.setBackgroundColor(colors.bg); } });
 ipcMain.handle('check-app-update', async () => { try { const data = await fetchJson('https://api.github.com/repos/EchoHS/GeekezBrowser/releases/latest'); if (!data || !data.tag_name) return { update: false }; const remote = data.tag_name.replace('v', ''); if (compareVersions(remote, app.getVersion()) > 0) { return { update: true, remote, url: 'https://browser.geekez.net/#downloads' }; } return { update: false }; } catch (e) { return { update: false, error: e.message }; } });
 ipcMain.handle('check-xray-update', async () => { try { const data = await fetchJson('https://api.github.com/repos/XTLS/Xray-core/releases/latest'); if (!data || !data.tag_name) return { update: false }; const remoteVer = data.tag_name; const currentVer = await getLocalXrayVersion(); if (remoteVer !== currentVer) { let assetName = ''; const arch = os.arch(); const platform = os.platform(); if (platform === 'win32') assetName = `Xray-windows-${arch === 'x64' ? '64' : '32'}.zip`; else if (platform === 'darwin') assetName = `Xray-macos-${arch === 'arm64' ? 'arm64-v8a' : '64'}.zip`; else assetName = `Xray-linux-${arch === 'x64' ? '64' : '32'}.zip`; const downloadUrl = `https://gh-proxy.com/https://github.com/XTLS/Xray-core/releases/download/${remoteVer}/${assetName}`; return { update: true, remote: remoteVer.replace(/^v/, ''), downloadUrl }; } return { update: false }; } catch (e) { return { update: false }; } });
@@ -595,6 +959,170 @@ ipcMain.handle('download-xray-update', async (e, url) => {
     }
 });
 ipcMain.handle('get-running-ids', () => Object.keys(activeProcesses));
+
+ipcMain.handle('open-path', async (event, targetPath) => {
+    try {
+        if (!targetPath) return { success: false, error: 'No path provided' };
+        const result = await shell.openPath(targetPath);
+        if (result) return { success: false, error: result };
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('get-profile-log-path', async (event, id) => {
+    try {
+        if (!id) return null;
+        const profileDir = path.join(DATA_PATH, id);
+        const engine = activeProcesses[id] ? activeProcesses[id].proxyEngine : (await (async () => {
+            try {
+                const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+                const p = profiles.find(x => x.id === id);
+                return p ? (p.proxyEngine || (p.fingerprint && p.fingerprint.proxyEngine) || 'xray') : 'xray';
+            } catch (e) { return 'xray'; }
+        })());
+        if (engine === 'sing-box') return path.join(profileDir, 'singbox_run.log');
+        return path.join(profileDir, 'xray_run.log');
+    } catch (e) {
+        return null;
+    }
+});
+
+ipcMain.handle('clear-profile-logs', async (event, id, clearHistory = false) => {
+    try {
+        if (!id) return { success: false, error: 'Missing id' };
+        const profileDir = path.join(DATA_PATH, id);
+        const xrayLog = path.join(profileDir, 'xray_run.log');
+        const sbLog = path.join(profileDir, 'singbox_run.log');
+        // Remove current logs
+        try { if (fs.existsSync(xrayLog)) await fs.remove(xrayLog); } catch (e) { }
+        try { if (fs.existsSync(sbLog)) await fs.remove(sbLog); } catch (e) { }
+
+        if (clearHistory) {
+            // Remove rotated logs too: xray_run.<timestamp>.log / singbox_run.<timestamp>.log
+            try {
+                const files = fs.existsSync(profileDir) ? await fs.readdir(profileDir) : [];
+                for (const f of files) {
+                    if (/^(xray_run|singbox_run)\..+\.log$/i.test(f)) {
+                        try { await fs.remove(path.join(profileDir, f)); } catch (e) { }
+                    }
+                }
+            } catch (e) { }
+        }
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('get-profile-log-sizes', async (event, id) => {
+    try {
+        if (!id) return { success: false, error: 'Missing id' };
+        const profileDir = path.join(DATA_PATH, id);
+        const xrayLog = path.join(profileDir, 'xray_run.log');
+        const sbLog = path.join(profileDir, 'singbox_run.log');
+        const statIf = async (p) => {
+            try { return fs.existsSync(p) ? (await fs.stat(p)).size : 0; } catch (e) { return 0; }
+        };
+        return { success: true, xray: await statIf(xrayLog), singbox: await statIf(sbLog) };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('list-profile-rotated-logs', async (event, id) => {
+    try {
+        if (!id) return { success: false, error: 'Missing id', files: [] };
+        const profileDir = path.join(DATA_PATH, id);
+        if (!fs.existsSync(profileDir)) return { success: true, files: [] };
+        const files = await fs.readdir(profileDir);
+        const rotated = [];
+        for (const f of files) {
+            if (/^(xray_run|singbox_run)\..+\.log$/i.test(f)) {
+                try {
+                    const full = path.join(profileDir, f);
+                    const st = await fs.stat(full);
+                    rotated.push({ name: f, path: full, size: st.size, mtimeMs: st.mtimeMs });
+                } catch (e) { }
+            }
+        }
+        rotated.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+        return { success: true, files: rotated };
+    } catch (e) {
+        return { success: false, error: e.message, files: [] };
+    }
+});
+
+ipcMain.handle('delete-profile-rotated-log', async (event, id, filename) => {
+    try {
+        if (!id) return { success: false, error: 'Missing id' };
+        if (!filename) return { success: false, error: 'Missing filename' };
+        const profileDir = path.join(DATA_PATH, id);
+        if (!fs.existsSync(profileDir)) return { success: false, error: 'Profile dir not found' };
+        // Only allow deleting rotated logs matching our pattern within the profile dir.
+        if (!/^(xray_run|singbox_run)\..+\.log$/i.test(filename)) return { success: false, error: 'Invalid filename' };
+        const full = path.join(profileDir, filename);
+        // Prevent path traversal
+        if (path.dirname(full) !== profileDir) return { success: false, error: 'Invalid path' };
+        if (fs.existsSync(full)) await fs.remove(full);
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('run-leak-check', async (event, profileId) => {
+    const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+    const profile = profiles.find(p => p.id === profileId);
+    if (!profile) return { success: false, error: 'Profile not found' };
+
+    const proc = activeProcesses[profileId];
+    if (!proc || !proc.browser) {
+        return { success: false, error: 'Profile not running', code: 'LEAKCHECK_PROFILE_NOT_RUNNING' };
+    }
+
+    try {
+        const { runLeakCheck } = require('./leakcheck/runLeakCheck');
+        const pageProvider = {
+            getPage: async () => {
+                const pages = await proc.browser.pages();
+                if (pages && pages.length > 0) return pages[0];
+                return await proc.browser.newPage();
+            }
+        };
+
+        const leakLogsDir = isDev ? path.join(process.cwd(), 'logs') : path.join(DATA_PATH, 'logs');
+        const result = await runLeakCheck(profile, {
+            logsDir: leakLogsDir,
+            probes: [
+                require('./leakcheck/probes/ip'),
+                require('./leakcheck/probes/headers'),
+                require('./leakcheck/probes/ipv6'),
+                require('./leakcheck/probes/webrtc')
+            ],
+            pageProvider
+        });
+
+        try {
+            profile.diagnostics = profile.diagnostics || {};
+            profile.diagnostics.lastLeakReport = {
+                path: result.reportPath,
+                createdAt: new Date().toISOString(),
+                summary: result.summary
+            };
+            await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
+        } catch (e) { }
+
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('leak-check-finished', { id: profileId, ...result });
+        }
+
+        return { success: true, ...result };
+    } catch (e) {
+        return { success: false, error: e.message, code: e.code || 'LEAKCHECK_INTERNAL_ERROR' };
+    }
+});
 ipcMain.handle('get-profiles', async () => { if (!fs.existsSync(PROFILES_FILE)) return []; return fs.readJson(PROFILES_FILE); });
 ipcMain.handle('update-profile', async (event, updatedProfile) => { let profiles = await fs.readJson(PROFILES_FILE); const index = profiles.findIndex(p => p.id === updatedProfile.id); if (index > -1) { profiles[index] = updatedProfile; await fs.writeJson(PROFILES_FILE, profiles); return true; } return false; });
 ipcMain.handle('save-profile', async (event, data) => {
@@ -616,6 +1144,7 @@ ipcMain.handle('save-profile', async (event, data) => {
         id: uuidv4(),
         name: data.name,
         proxyStr: data.proxyStr,
+        proxyEngine: data.proxyEngine || 'xray',
         tags: data.tags || [],
         fingerprint: fingerprint,
         preProxyOverride: 'default',
@@ -629,7 +1158,7 @@ ipcMain.handle('save-profile', async (event, data) => {
 ipcMain.handle('delete-profile', async (event, id) => {
     // 关闭正在运行的进程
     if (activeProcesses[id]) {
-        await forceKill(activeProcesses[id].xrayPid);
+        await forceKill(getProxyPid(activeProcesses[id]));
         try {
             await activeProcesses[id].browser.close();
         } catch (e) { }
@@ -694,6 +1223,82 @@ ipcMain.handle('delete-profile', async (event, id) => {
 
     return true;
 });
+
+ipcMain.handle('stop-profile', async (event, id) => {
+    if (!id) return { success: false, error: 'Missing id' };
+    if (!activeProcesses[id]) return { success: true, stopped: false };
+    try {
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('profile-status', { id, status: 'stopping' });
+            }
+        } catch (e) { }
+        await forceKill(getProxyPid(activeProcesses[id]));
+        try { await activeProcesses[id].browser.close(); } catch (e) { }
+
+        if (activeProcesses[id].logFd !== undefined) {
+            try { fs.closeSync(activeProcesses[id].logFd); } catch (e) { }
+        }
+        delete activeProcesses[id];
+        await autoClearSystemProxyIfEnabled();
+        await new Promise(r => setTimeout(r, 500));
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('profile-status', { id, status: 'stopped' });
+            }
+        } catch (e) { }
+        return { success: true, stopped: true };
+    } catch (e) {
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('profile-status', { id, status: 'stop_failed' });
+            }
+        } catch (err) { }
+        try {
+            const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+            const p = profiles.find(x => x.id === id);
+            if (p) {
+                p.diagnostics = p.diagnostics || {};
+                p.diagnostics.lastError = {
+                    at: new Date().toISOString(),
+                    stage: 'stop',
+                    message: e.message,
+                    engine: activeProcesses[id] ? activeProcesses[id].proxyEngine : (p.proxyEngine || 'xray'),
+                    logPath: path.join(DATA_PATH, id, (activeProcesses[id] && activeProcesses[id].proxyEngine === 'sing-box') ? 'singbox_run.log' : 'xray_run.log')
+                };
+                await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
+            }
+        } catch (writeErr) { }
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('set-system-proxy-mode', async (event, { enable, endpoint }) => {
+    try {
+        const result = await applySystemProxyMode({ enable: Boolean(enable), endpoint });
+        return { success: true, result };
+    } catch (e) {
+        return { success: false, error: e.message, code: e.code || 'SYSTEM_PROXY_ERROR' };
+    }
+});
+
+ipcMain.handle('get-system-proxy-status', async () => {
+    if (process.platform !== 'win32') return { supported: false };
+    const { execFile } = require('child_process');
+    const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+    function q(name) {
+        return new Promise((resolve) => {
+            execFile('reg.exe', ['QUERY', key, '/v', name], { windowsHide: true }, (err, stdout) => {
+                if (err) return resolve(null);
+                resolve((stdout || '').toString());
+            });
+        });
+    }
+    const proxyEnable = await q('ProxyEnable');
+    const proxyServer = await q('ProxyServer');
+    return { supported: true, raw: { proxyEnable, proxyServer } };
+});
+
 ipcMain.handle('get-settings', async () => { if (fs.existsSync(SETTINGS_FILE)) return fs.readJson(SETTINGS_FILE); return { preProxies: [], mode: 'single', enablePreProxy: false, enableRemoteDebugging: false }; });
 ipcMain.handle('save-settings', async (e, settings) => { await fs.writeJson(SETTINGS_FILE, settings); return true; });
 ipcMain.handle('select-extension-folder', async () => {
@@ -822,7 +1427,6 @@ function cleanFingerprint(fp) {
     const cleaned = { ...fp };
     delete cleaned.userAgent;
     delete cleaned.userAgentMetadata;
-    delete cleaned.webgl;
     return cleaned;
 }
 
@@ -914,6 +1518,31 @@ ipcMain.handle('export-selected-data', async (e, { type, profileIds }) => {
     if (type === 'all' || type === 'proxies') {
         exportObj.preProxies = settings.preProxies || [];
         exportObj.subscriptions = settings.subscriptions || [];
+    }
+    if (type === 'all' || type === 'proxies') {
+        // Export a lightweight health report derived from stored settings (no network calls).
+        const now = Date.now();
+        const nodes = (settings.preProxies || []).map(p => ({
+            id: p.id || null,
+            remark: p.remark || '',
+            groupId: p.groupId || 'manual',
+            urlScheme: (p.url && typeof p.url === 'string' && p.url.includes('://')) ? p.url.split('://')[0] : null,
+            enable: p.enable !== false,
+            latency: typeof p.latency === 'number' ? p.latency : null,
+            lastTestAt: p.lastTestAt || null,
+            lastTestOk: typeof p.lastTestOk === 'boolean' ? p.lastTestOk : null,
+            lastTestCode: p.lastTestCode || null,
+            lastTestMsg: p.lastTestMsg || null,
+            ipInfo: p.ipInfo || null,
+            lastIpAt: p.lastIpAt || null,
+            ageMs: (p.lastTestAt && typeof p.lastTestAt === 'number') ? (now - p.lastTestAt) : null
+        }));
+        exportObj.proxyHealth = {
+            version: 1,
+            createdAt: now,
+            totalNodes: nodes.length,
+            nodes
+        };
     }
 
     if (Object.keys(exportObj).length === 0) return { success: false, error: 'No data to export' };
@@ -1212,8 +1841,15 @@ ipcMain.handle('export-data', async (e, type) => {
 });
 
 // --- 核心启动逻辑 ---
-ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
+ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, options = {}) => {
     const sender = event.sender;
+    const skipProxyWarnOnce = Boolean(options && (options.skipProxyWarnOnce || options.skipProxyConsistencyWarnOnce));
+
+    try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('profile-status', { id: profileId, status: 'starting' });
+        }
+    } catch (e) { }
 
     if (activeProcesses[profileId]) {
         const proc = activeProcesses[profileId];
@@ -1235,11 +1871,11 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
                 }
                 return "环境已唤醒";
             } catch (e) {
-                await forceKill(proc.xrayPid);
+                await forceKill(getProxyPid(proc));
                 delete activeProcesses[profileId];
             }
         } else {
-            await forceKill(proc.xrayPid);
+            await forceKill(getProxyPid(proc));
             delete activeProcesses[profileId];
         }
         if (activeProcesses[profileId]) return "环境已唤醒";
@@ -1261,7 +1897,99 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
     if (!profile) throw new Error('Profile not found');
 
     if (!profile.fingerprint) profile.fingerprint = generateFingerprint();
-    if (!profile.fingerprint.languages) profile.fingerprint.languages = ['en-US', 'en'];
+    profile.fingerprint = normalizeFingerprintSpec(profile.fingerprint);
+
+    // Proxy -> Fingerprint linkage (local, self-use enterprise): test current proxy and apply timezone if needed
+    // Policy can be configured per profile; fallback to global settings default when absent.
+    try {
+        const autoLinkEnabled = !(profile.proxyPolicy && profile.proxyPolicy.autoLink === false);
+        if (autoLinkEnabled && profile.proxyStr) {
+            const { applyProxyGeoToFingerprint } = require('./proxy/linkFingerprint');
+            const { applyConsistencyPolicy } = require('./proxy/consistency');
+            const globalSettings = await fs.readJson(SETTINGS_FILE).catch(() => ({}));
+            const globalMode = globalSettings.defaultProxyConsistency || 'warn';
+            const profileConsistency = (profile.proxyPolicy && profile.proxyPolicy.consistencyPolicy) ? profile.proxyPolicy.consistencyPolicy : null;
+            const onMismatch = (profileConsistency && profileConsistency.onMismatch) ? profileConsistency.onMismatch : globalMode; // block|warn|autofix
+            const enforce = profileConsistency ? Boolean(profileConsistency.enforce) : true;
+            const allowAutofix = (profile.proxyPolicy && profile.proxyPolicy.allowAutofix) ? profile.proxyPolicy.allowAutofix : { language: false, geo: false };
+
+            const resolved = await testProxyNodeInternal(profile.proxyStr);
+
+            if (resolved && resolved.geo) {
+                const link = applyProxyGeoToFingerprint(profile, resolved, { enforce, onMismatch, allowAutofix });
+                if (!link.ok && onMismatch === 'block') {
+                    throw new Error(`Proxy/Fingerprint mismatch: ${link.issues.map(i => i.code).join(',')}`);
+                }
+                if (link.updatedProfile && JSON.stringify(link.updatedProfile.fingerprint) !== JSON.stringify(profile.fingerprint)) {
+                    profile.fingerprint = link.updatedProfile.fingerprint;
+                    await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
+                }
+
+                const gate = applyConsistencyPolicy({
+                    profile,
+                    proxyTestResult: resolved,
+                    policy: { enforce, onMismatch }
+                });
+                if (gate.updatedProfile && JSON.stringify(gate.updatedProfile.fingerprint) !== JSON.stringify(profile.fingerprint)) {
+                    profile.fingerprint = gate.updatedProfile.fingerprint;
+                    await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
+                }
+                if (!gate.ok && onMismatch === 'block') {
+                    throw new Error(`Proxy/Fingerprint consistency block: ${gate.issues.map(i => i.code).join(',')}`);
+                }
+
+                // For warn mode: notify UI with details and allow user-triggered "autofix then relaunch"
+                if (!skipProxyWarnOnce && !gate.ok && onMismatch === 'warn') {
+                    try {
+                        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+                            mainWindow.webContents.send('proxy-consistency-warning', {
+                                profileId,
+                                issues: gate.issues || [],
+                                resolvedGeo: resolved.geo,
+                            });
+                        }
+                    } catch (e) { }
+                }
+
+                // UA-CH/platform/hardware consistency gate (best-effort; can block when configured)
+                try {
+                    const { evaluateUaChConsistency } = require('./proxy/uaConsistency');
+                    // Prefer real outbound headers when available (httpbin echo) to reduce false confidence.
+                    let headers = null;
+                    try {
+                        const { probeOutboundHeaders } = require('./proxy/headerProbe');
+                        headers = await probeOutboundHeaders({ timeoutMs: 8000, proxyStr: profile.proxyStr });
+                    } catch (e) { }
+                    if (!headers) {
+                        headers = {
+                            userAgent: profile.fingerprint?.cdp?.userAgent || profile.fingerprint?.userAgent || null,
+                            secChUaPlatform: (profile.fingerprint?.cdp?.userAgentMetadata && profile.fingerprint.cdp.userAgentMetadata.platform) ? profile.fingerprint.cdp.userAgentMetadata.platform : null,
+                        };
+                    }
+                    const uaIssues = evaluateUaChConsistency({ profile, headers });
+                    if (Array.isArray(uaIssues) && uaIssues.length > 0 && onMismatch === 'block') {
+                        throw new Error(`UA consistency block: ${uaIssues.map(i => i.code).join(',')}`);
+                    }
+                } catch (e) {
+                    if (onMismatch === 'block') throw e;
+                }
+            }
+        }
+    } catch (e) {
+        if (profile.proxyPolicy && profile.proxyPolicy.consistencyPolicy && profile.proxyPolicy.consistencyPolicy.onMismatch === 'block') {
+            throw e;
+        }
+    }
+
+    profile.fingerprint = normalizeFingerprintSpec(profile.fingerprint);
+
+    // Clear previous error once we're about to proceed with a new launch attempt (best effort)
+    try {
+        if (profile.diagnostics && profile.diagnostics.lastError) {
+            delete profile.diagnostics.lastError;
+            await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
+        }
+    } catch (e) { }
 
     // Pre-proxy settings (settings already loaded above)
     const override = profile.preProxyOverride || 'default';
@@ -1283,6 +2011,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
         const userDataDir = path.join(profileDir, 'browser_data');
         const xrayConfigPath = path.join(profileDir, 'config.json');
         const xrayLogPath = path.join(profileDir, 'xray_run.log');
+        const singboxLogPath = path.join(profileDir, 'singbox_run.log');
         fs.ensureDirSync(userDataDir);
 
         try {
@@ -1301,18 +2030,21 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
             await fs.writeJson(preferencesPath, preferences);
         } catch (e) { }
 
-        const config = generateXrayConfig(profile.proxyStr, localPort, finalPreProxyConfig);
-        fs.writeJsonSync(xrayConfigPath, config);
-        const logFd = fs.openSync(xrayLogPath, 'a');
-        const xrayProcess = spawn(BIN_PATH, ['-c', xrayConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: ['ignore', logFd, logFd], windowsHide: true });
+        const proxyEngine = getProxyEngineFromProfile(profile);
+        const logPath = proxyEngine === 'sing-box' ? singboxLogPath : xrayLogPath;
+        try {
+            const { rotateLogIfNeeded } = require('./proxy/logRotate');
+            await rotateLogIfNeeded(logPath, { maxBytes: 5 * 1024 * 1024, keep: 5, tag: proxyEngine });
+        } catch (e) { }
+        const logFd = fs.openSync(logPath, 'a');
+        const proxyResult = await startProxyEngine(profile, localPort, xrayConfigPath, logFd);
+        const xrayProcess = proxyResult.process;
 
         // 优化：减少等待时间，Xray 通常 300ms 内就能启动
         await new Promise(resolve => setTimeout(resolve, 300));
 
         // 0. Resolve Language (Fix: Resolve 'auto' BEFORE generating extension so inject script gets explicit language)
-        const targetLang = profile.fingerprint?.language && profile.fingerprint.language !== 'auto'
-            ? profile.fingerprint.language
-            : 'en-US';
+        const targetLang = (profile.fingerprint?.cdp?.locale || (profile.fingerprint?.language && profile.fingerprint.language !== 'auto' ? profile.fingerprint.language : null) || 'en-US');
 
         // Update in-memory profile to ensure generateExtension writes the correct language to inject script
         profile.fingerprint.language = targetLang;
@@ -1338,10 +2070,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
             `--user-data-dir=${userDataDir}`,
             `--window-size=${profile.fingerprint?.window?.width || 1280},${profile.fingerprint?.window?.height || 800}`,
             '--restore-last-session',
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
             '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
             '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
             `--lang=${targetLang}`,
             `--accept-lang=${targetLang}`,
@@ -1357,6 +2086,12 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
             '--disk-cache-size=52428800',        // 限制磁盘缓存为 50MB
             '--media-cache-size=52428800'        // 限制媒体缓存为 50MB
         ];
+
+        // Security: keep Chromium sandbox enabled by default.
+        // Only disable sandbox for Linux root (common in some containerized environments).
+        if (process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0) {
+            launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
+        }
 
         // 5. Remote Debugging Port (if enabled)
         if (settings.enableRemoteDebugging && profile.debugPort) {
@@ -1408,19 +2143,26 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
         });
 
         activeProcesses[profileId] = {
-            xrayPid: xrayProcess.pid,
+            proxyPid: xrayProcess.pid,
+            proxyEngine: proxyResult.engine,
             browser,
             logFd: logFd  // 存储日志文件描述符，用于后续关闭
         };
         sender.send('profile-status', { id: profileId, status: 'running' });
+        await autoApplySystemProxyForRunningProfile({ profileId, localPort });
 
-        // CDP Geolocation Removed in favor of Stealth JS Hook
-        // 由于 CDP 本身会被检测，我们移除所有 Emulation.Overrides
-        // 地理位置将由 fingerprint.js 中的 Stealth Hook 接管
+        // Apply CDP overrides (timezone/locale/geo/UA-CH) prior to any user navigation.
+        // Note: some detections can flag CDP usage; for enterprise self-use we prioritize determinism.
+        try {
+            const page = await browser.newPage();
+            const session = await applyCdpOverridesToPage(page, profile.fingerprint);
+            try { await session.detach(); } catch (e) { }
+            try { await page.close(); } catch (e) { }
+        } catch (e) { }
 
         browser.on('disconnected', async () => {
             if (activeProcesses[profileId]) {
-                const pid = activeProcesses[profileId].xrayPid;
+                const pid = getProxyPid(activeProcesses[profileId]);
                 const logFd = activeProcesses[profileId].logFd;
 
                 // 关闭日志文件描述符
@@ -1449,13 +2191,24 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle) => {
 
         return switchMsg;
     } catch (err) {
+        try {
+            profile.diagnostics = profile.diagnostics || {};
+            profile.diagnostics.lastError = {
+                at: new Date().toISOString(),
+                stage: 'launch',
+                message: err.message,
+                engine: getProxyEngineFromProfile(profile),
+                logPath: path.join(DATA_PATH, profileId, getProxyEngineFromProfile(profile) === 'sing-box' ? 'singbox_run.log' : 'xray_run.log')
+            };
+            await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
+        } catch (e) { }
         console.error(err);
         throw err;
     }
 });
 
 app.on('window-all-closed', () => {
-    Object.values(activeProcesses).forEach(p => forceKill(p.xrayPid));
+    Object.values(activeProcesses).forEach(p => forceKill(getProxyPid(p)));
     if (process.platform !== 'darwin') app.quit();
 });
 // Helpers (Same)
@@ -1491,4 +2244,8 @@ function extractZip(zipPath, destDir) {
             });
         }
     });
+}
+function getProxyPid(proc) {
+    if (!proc) return null;
+    return proc.proxyPid || proc.xrayPid || null;
 }
