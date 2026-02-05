@@ -24,6 +24,7 @@ const { generateXrayConfig } = require('./utils');
 const { generateFingerprint, normalizeFingerprintSpec, getInjectScript } = require('./fingerprint');
 const { normalizeProxySpec } = require('./proxy/proxySpec');
 const { buildSingboxConfigFromProxySpec } = require('./proxy/singboxConfig');
+const { downloadFile, extractZip, isZipFileHeader, sha256FileHex } = require('./updateUtils');
 
 const isDev = !app.isPackaged;
 const RESOURCES_BIN = isDev ? path.join(__dirname, 'resources', 'bin') : path.join(process.resourcesPath, 'bin');
@@ -885,6 +886,14 @@ ipcMain.handle('download-xray-update', async (e, url) => {
     try {
         fs.mkdirSync(tempDir, { recursive: true });
         await downloadFile(url, zipPath);
+        if (!fs.existsSync(zipPath)) throw new Error('Download failed: file not found');
+        const zipStat = fs.statSync(zipPath);
+        if (zipStat.size <= 0) throw new Error('Download failed: empty file');
+        if (!isZipFileHeader(zipPath)) throw new Error('Downloaded file is not a zip');
+        try {
+            const zipSha = sha256FileHex(zipPath);
+            console.log('[Update] Downloaded zip sha256:', zipSha.slice(0, 16) + '…');
+        } catch (e) { }
         if (process.platform === 'win32') await new Promise((resolve) => exec('taskkill /F /IM xray.exe', () => resolve()));
         activeProcesses = {};
         await new Promise(r => setTimeout(r, 3000));
@@ -927,6 +936,31 @@ ipcMain.handle('download-xray-update', async (e, url) => {
             listAllFiles(extractDir);
             console.log('[Update Debug] All extracted files:', allFiles);
             throw new Error('Xray binary not found in package');
+        }
+
+        // Basic sanity check for extracted binary (size + magic header)
+        try {
+            const st = fs.statSync(xrayBinary);
+            if (!st.isFile()) throw new Error('Xray binary is not a file');
+            if (st.size < 512 * 1024) throw new Error(`Xray binary too small: ${st.size}`);
+            if (st.size > 120 * 1024 * 1024) throw new Error(`Xray binary too large: ${st.size}`);
+
+            const fd = fs.openSync(xrayBinary, 'r');
+            const head = Buffer.alloc(4);
+            fs.readSync(fd, head, 0, 4, 0);
+            fs.closeSync(fd);
+            if (process.platform === 'win32') {
+                if (!(head[0] === 0x4d && head[1] === 0x5a)) throw new Error('Xray binary magic mismatch (expected MZ)');
+            } else if (process.platform === 'linux') {
+                if (!(head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46)) throw new Error('Xray binary magic mismatch (expected ELF)');
+            } else if (process.platform === 'darwin') {
+                // Mach-O / Fat magic values
+                const m = head.readUInt32BE(0);
+                const ok = new Set([0xfeedface, 0xfeedfacf, 0xcafebabe, 0xbebafeca, 0xcefaedfe, 0xcffaedfe]);
+                if (!ok.has(m)) throw new Error('Xray binary magic mismatch (expected Mach-O)');
+            }
+        } catch (e) {
+            throw e;
         }
 
         // Windows文件锁规避：先重命名旧文件，再复制新文件
@@ -2215,36 +2249,6 @@ app.on('window-all-closed', () => {
 function fetchJson(url) { return new Promise((resolve, reject) => { const req = https.get(url, { headers: { 'User-Agent': 'GeekEZ-Browser' } }, (res) => { let data = ''; res.on('data', c => data += c); res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } }); }); req.on('error', reject); }); }
 function getLocalXrayVersion() { return new Promise((resolve) => { if (!fs.existsSync(BIN_PATH)) return resolve('v0.0.0'); try { const proc = spawn(BIN_PATH, ['-version']); let output = ''; proc.stdout.on('data', d => output += d.toString()); proc.on('close', () => { const match = output.match(/Xray\s+v?(\d+\.\d+\.\d+)/i); resolve(match ? (match[1].startsWith('v') ? match[1] : 'v' + match[1]) : 'v0.0.0'); }); proc.on('error', () => resolve('v0.0.0')); } catch (e) { resolve('v0.0.0'); } }); }
 function compareVersions(v1, v2) { const p1 = v1.split('.').map(Number); const p2 = v2.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((p1[i] || 0) > (p2[i] || 0)) return 1; if ((p1[i] || 0) < (p2[i] || 0)) return -1; } return 0; }
-function downloadFile(url, dest) { return new Promise((resolve, reject) => { const file = fs.createWriteStream(dest); https.get(url, (response) => { if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) { downloadFile(response.headers.location, dest).then(resolve).catch(reject); return; } response.pipe(file); file.on('finish', () => file.close(resolve)); }).on('error', (err) => { fs.unlink(dest, () => { }); reject(err); }); }); }
-function extractZip(zipPath, destDir) {
-    return new Promise((resolve, reject) => {
-        if (os.platform() === 'win32') {
-            // Windows: 使用 adm-zip（可靠）
-            try {
-                const AdmZip = require('adm-zip');
-                const zip = new AdmZip(zipPath);
-                zip.extractAllTo(destDir, true);
-                console.log('[Extract Success] Extracted to:', destDir);
-                resolve();
-            } catch (err) {
-                console.error('[Extract Error]', err);
-                reject(err);
-            }
-        } else {
-            // macOS/Linux: 使用原生 unzip 命令
-            exec(`unzip -o "${zipPath}" -d "${destDir}"`, (err, stdout, stderr) => {
-                if (err) {
-                    console.error('[Extract Error]', err);
-                    console.error('[Extract stderr]', stderr);
-                    reject(err);
-                } else {
-                    console.log('[Extract Success]', stdout);
-                    resolve();
-                }
-            });
-        }
-    });
-}
 function getProxyPid(proc) {
     if (!proc) return null;
     return proc.proxyPid || proc.xrayPid || null;

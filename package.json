@@ -7,6 +7,7 @@
   "scripts": {
     "start": "electron .",
     "regression:ipc": "node scripts/regression_ipc.js",
+    "regression:updater": "node scripts/regression_updater_security.js",
     "regression:i18n": "node scripts/regression_i18n.js",
     "regression:all": "node scripts/regression_all.js",
     "poc:p2a": "node scripts/p2a_policy_matrix_poc.js",
