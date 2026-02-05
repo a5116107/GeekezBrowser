@@ -75,13 +75,15 @@ function getProxyEngineFromProfile(profile) {
     return profile.proxyEngine || (profile.fingerprint && profile.fingerprint.proxyEngine) || 'xray';
 }
 
-async function startProxyEngine(profile, localPort, configPath, logFd) {
+async function startProxyEngine(profile, localPort, configPath, logFd, options = {}) {
     const engine = getProxyEngineFromProfile(profile);
     const proxyStr = profile.proxyStr || '';
+    const preProxyConfig = (options && typeof options === 'object' && options.preProxyConfig)
+        ? options.preProxyConfig
+        : ((profile && profile.preProxyConfig) ? profile.preProxyConfig : null);
 
     if (engine === 'xray') {
-        const finalPreProxyConfig = profile.preProxyConfig || null;
-        const config = generateXrayConfig(proxyStr, localPort, finalPreProxyConfig);
+        const config = generateXrayConfig(proxyStr, localPort, preProxyConfig);
         fs.writeJsonSync(configPath, config);
         const xrayProcess = spawn(BIN_PATH, ['-c', configPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: ['ignore', logFd, logFd], windowsHide: true });
         return { engine: 'xray', pid: xrayProcess.pid, process: xrayProcess };
@@ -94,7 +96,12 @@ async function startProxyEngine(profile, localPort, configPath, logFd) {
             throw err;
         }
         const spec = normalizeProxySpec(proxyStr);
-        const sbConfig = buildSingboxConfigFromProxySpec(spec, localPort);
+        let preProxySpec = null;
+        try {
+            const target = preProxyConfig && Array.isArray(preProxyConfig.preProxies) && preProxyConfig.preProxies.length > 0 ? preProxyConfig.preProxies[0] : null;
+            if (target && target.url) preProxySpec = normalizeProxySpec(target.url);
+        } catch (e) { }
+        const sbConfig = preProxySpec ? buildSingboxConfigFromProxySpec(spec, localPort, { preProxySpec }) : buildSingboxConfigFromProxySpec(spec, localPort);
         fs.writeJsonSync(configPath, sbConfig);
         const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: { ...process.env }, stdio: ['ignore', logFd, logFd], windowsHide: true });
         return { engine: 'sing-box', pid: sbProcess.pid, process: sbProcess };
@@ -874,9 +881,87 @@ async function applyCdpOverridesToPage(page, fingerprint) {
 
     return session;
 }
+
+function getXrayReleaseAssetName() {
+    const arch = os.arch();
+    const platform = os.platform();
+    const isArm64 = arch === 'arm64';
+
+    if (platform === 'win32') {
+        if (isArm64) return 'Xray-windows-arm64-v8a.zip';
+        return `Xray-windows-${arch === 'x64' ? '64' : '32'}.zip`;
+    }
+
+    if (platform === 'darwin') {
+        return `Xray-macos-${isArm64 ? 'arm64-v8a' : '64'}.zip`;
+    }
+
+    if (platform === 'linux') {
+        if (isArm64) return 'Xray-linux-arm64-v8a.zip';
+        return `Xray-linux-${arch === 'x64' ? '64' : '32'}.zip`;
+    }
+
+    // Fallback: keep previous behavior for unknown platforms
+    if (isArm64) return `Xray-${platform}-arm64-v8a.zip`;
+    return `Xray-${platform}-${arch === 'x64' ? '64' : '32'}.zip`;
+}
+
+function buildXrayReleaseDownloadUrls(remoteVer, assetName) {
+    const direct = `https://github.com/XTLS/Xray-core/releases/download/${remoteVer}/${assetName}`;
+    const proxy = `https://gh-proxy.com/${direct}`;
+    return { direct, proxy };
+}
+
+function parseSha256FromDgstText(text) {
+    if (typeof text !== 'string') return null;
+    const m = text.match(/SHA2-256=\s*([a-f0-9]{64})/i);
+    return m ? m[1].toLowerCase() : null;
+}
+
+function getXrayVersionFromBinary(binaryPath) {
+    return new Promise((resolve) => {
+        if (!binaryPath) return resolve('v0.0.0');
+        try {
+            const proc = spawn(binaryPath, ['-version'], { windowsHide: true });
+            let output = '';
+            proc.stdout.on('data', d => output += d.toString());
+            proc.stderr.on('data', d => output += d.toString());
+            const timer = setTimeout(() => {
+                try { proc.kill(); } catch (e) { }
+                resolve('v0.0.0');
+            }, 8000);
+            proc.on('close', () => {
+                try { clearTimeout(timer); } catch (e) { }
+                const match = output.match(/Xray\s+v?(\d+\.\d+\.\d+)/i);
+                resolve(match ? `v${match[1]}` : 'v0.0.0');
+            });
+            proc.on('error', () => {
+                try { clearTimeout(timer); } catch (e) { }
+                resolve('v0.0.0');
+            });
+        } catch (e) {
+            resolve('v0.0.0');
+        }
+    });
+}
 ipcMain.handle('set-title-bar-color', (e, colors) => { const win = BrowserWindow.fromWebContents(e.sender); if (win) { if (process.platform === 'win32') try { win.setTitleBarOverlay({ color: colors.bg, symbolColor: colors.symbol }); } catch (e) { } win.setBackgroundColor(colors.bg); } });
 ipcMain.handle('check-app-update', async () => { try { const data = await fetchJson('https://api.github.com/repos/EchoHS/GeekezBrowser/releases/latest'); if (!data || !data.tag_name) return { update: false }; const remote = data.tag_name.replace('v', ''); if (compareVersions(remote, app.getVersion()) > 0) { return { update: true, remote, url: 'https://browser.geekez.net/#downloads' }; } return { update: false }; } catch (e) { return { update: false, error: e.message }; } });
-ipcMain.handle('check-xray-update', async () => { try { const data = await fetchJson('https://api.github.com/repos/XTLS/Xray-core/releases/latest'); if (!data || !data.tag_name) return { update: false }; const remoteVer = data.tag_name; const currentVer = await getLocalXrayVersion(); if (remoteVer !== currentVer) { let assetName = ''; const arch = os.arch(); const platform = os.platform(); if (platform === 'win32') assetName = `Xray-windows-${arch === 'x64' ? '64' : '32'}.zip`; else if (platform === 'darwin') assetName = `Xray-macos-${arch === 'arm64' ? 'arm64-v8a' : '64'}.zip`; else assetName = `Xray-linux-${arch === 'x64' ? '64' : '32'}.zip`; const downloadUrl = `https://gh-proxy.com/https://github.com/XTLS/Xray-core/releases/download/${remoteVer}/${assetName}`; return { update: true, remote: remoteVer.replace(/^v/, ''), downloadUrl }; } return { update: false }; } catch (e) { return { update: false }; } });
+ipcMain.handle('check-xray-update', async () => {
+    try {
+        const data = await fetchJson('https://api.github.com/repos/XTLS/Xray-core/releases/latest');
+        if (!data || !data.tag_name) return { update: false };
+
+        const remoteVer = data.tag_name;
+        const currentVer = await getLocalXrayVersion();
+        if (remoteVer === currentVer) return { update: false };
+
+        const assetName = getXrayReleaseAssetName();
+        const { proxy } = buildXrayReleaseDownloadUrls(remoteVer, assetName);
+        return { update: true, remote: remoteVer.replace(/^v/, ''), downloadUrl: proxy };
+    } catch (e) {
+        return { update: false };
+    }
+});
 ipcMain.handle('download-xray-update', async (e, url) => {
     const exeName = process.platform === 'win32' ? 'xray.exe' : 'xray';
     const tempBase = os.tmpdir();
@@ -884,16 +969,67 @@ ipcMain.handle('download-xray-update', async (e, url) => {
     const tempDir = path.join(tempBase, updateId);
     const zipPath = path.join(tempDir, 'xray.zip');
     try {
+        // Do not trust renderer-provided URLs. Only allow the latest official XTLS/Xray-core asset for this platform.
+        const assetName = getXrayReleaseAssetName();
+        let remoteVer = null;
+        let useDirect = false;
+        try {
+            const data = await fetchJson('https://api.github.com/repos/XTLS/Xray-core/releases/latest');
+            if (data && data.tag_name) remoteVer = data.tag_name;
+        } catch (e) { }
+
+        const inputUrl = (typeof url === 'string') ? url.trim() : '';
+        if (remoteVer) {
+            const { direct, proxy } = buildXrayReleaseDownloadUrls(remoteVer, assetName);
+            // Ignore untrusted renderer URLs. Optionally honor "direct" when it exactly matches.
+            useDirect = inputUrl === direct;
+            url = useDirect ? direct : proxy;
+        } else {
+            // Fallback: validate by path pattern to block arbitrary GitHub projects.
+            if (!inputUrl) throw new Error('Missing Xray download URL');
+            let embedded = inputUrl;
+            try {
+                const u = new URL(inputUrl);
+                if (u.hostname === 'gh-proxy.com') {
+                    embedded = decodeURIComponent(String(u.pathname || '').replace(/^\/+/, ''));
+                }
+            } catch (e) { }
+            if (!/https:\/\/github\.com\/XTLS\/Xray-core\/releases\/download\//i.test(embedded)) {
+                throw new Error('Invalid Xray download URL');
+            }
+            if (!embedded.endsWith(`/${assetName}`)) {
+                throw new Error('Invalid Xray download URL');
+            }
+            url = inputUrl;
+        }
+
         fs.mkdirSync(tempDir, { recursive: true });
         await downloadFile(url, zipPath);
         if (!fs.existsSync(zipPath)) throw new Error('Download failed: file not found');
         const zipStat = fs.statSync(zipPath);
         if (zipStat.size <= 0) throw new Error('Download failed: empty file');
         if (!isZipFileHeader(zipPath)) throw new Error('Downloaded file is not a zip');
-        try {
-            const zipSha = sha256FileHex(zipPath);
-            console.log('[Update] Downloaded zip sha256:', zipSha.slice(0, 16) + '…');
-        } catch (e) { }
+        let zipSha = null;
+        try { zipSha = sha256FileHex(zipPath); } catch (e) { }
+
+        // Download and verify upstream sha256 digest when possible.
+        if (remoteVer && zipSha) {
+            let expectedSha = null;
+            try {
+                const dgstPath = path.join(tempDir, 'xray.zip.dgst');
+                const { direct: dgstDirect, proxy: dgstProxy } = buildXrayReleaseDownloadUrls(remoteVer, `${assetName}.dgst`);
+                await downloadFile(useDirect ? dgstDirect : dgstProxy, dgstPath, { maxBytes: 1024 * 1024 });
+                const dgstText = fs.readFileSync(dgstPath, 'utf8');
+                expectedSha = parseSha256FromDgstText(dgstText);
+            } catch (e) {
+                console.warn('[Update Warning] Zip sha256 verification skipped:', e.message || e);
+            }
+            if (expectedSha && zipSha.toLowerCase() !== expectedSha) {
+                throw new Error('Downloaded zip sha256 mismatch');
+            }
+        }
+
+        if (zipSha) console.log('[Update] Downloaded zip sha256:', zipSha.slice(0, 16) + '…');
         if (process.platform === 'win32') await new Promise((resolve) => exec('taskkill /F /IM xray.exe', () => resolve()));
         activeProcesses = {};
         await new Promise(r => setTimeout(r, 3000));
@@ -961,6 +1097,17 @@ ipcMain.handle('download-xray-update', async (e, url) => {
             }
         } catch (e) {
             throw e;
+        }
+
+        // Extra validation: ensure the extracted binary reports the expected version (prevents downgrade/hijack).
+        if (process.platform !== 'win32') {
+            try { fs.chmodSync(xrayBinary, '755'); } catch (e) { }
+        }
+        if (remoteVer) {
+            const extractedVer = await getXrayVersionFromBinary(xrayBinary);
+            if (extractedVer !== remoteVer) {
+                throw new Error(`Xray version mismatch: expected ${remoteVer}, got ${extractedVer}`);
+            }
         }
 
         // Windows文件锁规避：先重命名旧文件，再复制新文件
@@ -1365,7 +1512,10 @@ ipcMain.handle('get-user-extensions', async () => {
     const settings = await fs.readJson(SETTINGS_FILE);
     return settings.userExtensions || [];
 });
-ipcMain.handle('open-url', async (e, url) => { await shell.openExternal(url); });
+ipcMain.handle('open-url', async (e, url) => {
+    const u = parseHttpUrlOrThrow(url);
+    await shell.openExternal(u.toString());
+});
 
 // --- 自定义数据目录 ---
 ipcMain.handle('get-data-path-info', async () => {
@@ -2071,7 +2221,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
             await rotateLogIfNeeded(logPath, { maxBytes: 5 * 1024 * 1024, keep: 5, tag: proxyEngine });
         } catch (e) { }
         const logFd = fs.openSync(logPath, 'a');
-        const proxyResult = await startProxyEngine(profile, localPort, xrayConfigPath, logFd);
+        const proxyResult = await startProxyEngine(profile, localPort, xrayConfigPath, logFd, { preProxyConfig: finalPreProxyConfig });
         const xrayProcess = proxyResult.process;
 
         // 优化：减少等待时间，Xray 通常 300ms 内就能启动

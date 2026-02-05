@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const AdmZip = require('adm-zip');
 
-const { extractZip, isZipFileHeader, sha256FileHex } = require('../updateUtils');
+const { extractZip, isZipFileHeader, sha256FileHex, validateUpdateDownloadUrl } = require('../updateUtils');
 
 async function main() {
   const base = path.join(os.tmpdir(), `geekez_updater_reg_${Date.now()}`);
@@ -67,6 +67,18 @@ async function main() {
   }
   if (!blocked) throw new Error('expected absolute path entry to be blocked');
 
+  // 4) gh-proxy target allowlist must be enforced (no network; validation only)
+  validateUpdateDownloadUrl(
+    'https://gh-proxy.com/https://github.com/XTLS/Xray-core/releases/download/v0.0.0/Xray-windows-64.zip'
+  );
+  blocked = false;
+  try {
+    validateUpdateDownloadUrl('https://gh-proxy.com/https://example.com/evil.zip');
+  } catch (e) {
+    blocked = true;
+  }
+  if (!blocked) throw new Error('expected gh-proxy target host to be blocked');
+
   console.log('[ok] updater security regression passed');
 }
 
@@ -74,4 +86,3 @@ main().catch((e) => {
   console.error('[fail]', e && e.stack ? e.stack : e);
   process.exit(1);
 });
-

@@ -668,7 +668,7 @@
 
 ### SEC-10：Profile 列表去 innerHTML 拼接 + 事件委托（loadProfiles）
 - id: `SEC-10`
-- status: `DOING`
+- status: `DONE`
 - owner: `Codex`
 - scope: `loadProfiles` 改为 DOM `createElement` 渲染（profile 卡片不再拼接 `innerHTML`）；移除 `onclick/onchange` inline handlers，改用 `data-action` + 列表容器事件委托；保证按钮（launch/restart/edit/open log/rotated/clear logs/leakcheck/delete）与 quick-switch 下拉行为不回归；Leak/Err tag 点击逻辑保持
 - acceptance:
@@ -678,7 +678,7 @@
 
 ### SEC-11：Proxy Manager 列表去 innerHTML 拼接 + DOM 事件绑定（renderProxyNodes）
 - id: `SEC-11`
-- status: `DOING`
+- status: `DONE`
 - owner: `Codex`
 - scope: `renderProxyNodes` 的节点行改为 DOM `createElement` 渲染（不再拼接 `div.innerHTML` / inline `onclick/onchange`）；测试按钮用 `data-proxy-action/data-proxy-id` 标注并更新 `testSingleProxy/testCurrentGroup` 的按钮定位逻辑；保留 single/balance/failover 选择行为与样式
 - acceptance:
@@ -687,7 +687,7 @@
 
 ### SEC-12：City/Language/Timezone 下拉去 innerHTML 拼接（populateDropdown）
 - id: `SEC-12`
-- status: `DOING`
+- status: `DONE`
 - owner: `Codex`
 - scope: `initCustomCityDropdown` / `initCustomLanguageDropdown` / `initCustomTimezoneDropdown` 的 `populateDropdown` 改为 DOM `createElement` 渲染（不再用 `dropdown.innerHTML = ...`），避免属性注入与潜在 XSS；保持键盘上下选择/回车选择/点击选择行为一致
 - acceptance:
@@ -721,5 +721,13 @@
 - status: `DONE`
 - owner: `Codex`
 - scope: `test-proxy-node` / `testProxyNodeInternal`：优先 xray，失败时回退 sing-box；并让 `ipify/ipapi` 探测通过本地 socks 代理，确保 geo/timezone 联动依据真实出口
+- acceptance:
+  - `npm run regression:all` PASS
+
+### P0-Proxy-9：PreProxy 启动接通（xray/sing-box）+ h2 传输映射补齐
+- id: `P0-Proxy-9`
+- status: `DONE`
+- owner: `Codex`
+- scope: launch 时将选出的 `preProxyConfig` 实际传入代理引擎；sing-box 支持 preProxy 通过 detour 链接；补齐 vless/trojan `type=h2` 的 sing-box transport 映射；sing-box JSON 导入 http+tls 输出为 https share link
 - acceptance:
   - `npm run regression:all` PASS

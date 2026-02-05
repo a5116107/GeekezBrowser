@@ -12,6 +12,8 @@ let viewMode = localStorage.getItem('geekez_view') || 'list';
 const __restartState = new Set();
 const __lastStatus = new Map();
 const __logSizeCache = new Map(); // id -> { ts:number, total:number }
+let __profileListEventsBound = false;
+let __preProxyListEventsBound = false;
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (ch) => {
@@ -58,9 +60,15 @@ function initCustomCityDropdown(inputId, dropdownId) {
             item.name.toLowerCase().includes(lowerFilter)
         );
 
-        dropdown.innerHTML = filtered.map((item, index) =>
-            `<div class="timezone-item" data-name="${item.name}" data-index="${index}">${item.name}</div>`
-        ).join('');
+        dropdown.textContent = '';
+        filtered.forEach((item, index) => {
+            const el = document.createElement('div');
+            el.className = 'timezone-item';
+            el.dataset.name = item.name;
+            el.dataset.index = String(index);
+            el.textContent = item.name;
+            dropdown.appendChild(el);
+        });
 
         selectedIndex = -1;
     }
@@ -157,9 +165,15 @@ function initCustomLanguageDropdown(inputId, dropdownId) {
             item.name.toLowerCase().includes(lowerFilter)
         );
 
-        dropdown.innerHTML = filtered.map((item, index) =>
-            `<div class="timezone-item" data-code="${item.code}" data-index="${index}">${item.name}</div>`
-        ).join('');
+        dropdown.textContent = '';
+        filtered.forEach((item, index) => {
+            const el = document.createElement('div');
+            el.className = 'timezone-item';
+            el.dataset.code = item.code;
+            el.dataset.index = String(index);
+            el.textContent = item.name;
+            dropdown.appendChild(el);
+        });
         selectedIndex = -1;
     }
 
@@ -692,7 +706,7 @@ function showUpdateConfirm(version, url) {
     const yesBtn = document.getElementById('confirmYes');
     const noBtn = document.getElementById('confirmNo');
 
-    msgEl.innerHTML = `${t('appUpdateFound')} (v${escapeHtml(version)})<br><br>${t('askUpdate')}?`;
+    msgEl.innerHTML = `${escapeHtml(t('appUpdateFound'))} (v${escapeHtml(version)})<br><br>${escapeHtml(t('askUpdate'))}?`;
 
     // Update button - go to download page
     yesBtn.textContent = t('goDownload') || '前往下载';
@@ -803,7 +817,7 @@ async function openRotatedLogsById(profileId) {
         if (search) search.value = '';
         list.innerHTML = '';
         if (!res.files || res.files.length === 0) {
-            list.innerHTML = `<div style="opacity:0.7; padding:10px;">${t('noRotatedLogs') || 'No rotated logs'}</div>`;
+            list.innerHTML = `<div style="opacity:0.7; padding:10px;">${escapeHtml(t('noRotatedLogs') || 'No rotated logs')}</div>`;
         } else {
             res.files.forEach(f => {
                 const item = document.createElement('div');
@@ -813,7 +827,7 @@ async function openRotatedLogsById(profileId) {
                 const fileName = f.name || '';
                 const safeNameText = escapeHtml(fileName);
                 const safeNameAttr = escapeAttr(fileName);
-                item.innerHTML = `<div style="flex:1; cursor:pointer; min-width:0;"><div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${safeNameText}</div><div style="font-size:11px; opacity:0.7;">${formatBytes(f.size || 0)}</div></div><div style="display:flex; gap:8px;"><button class="outline no-drag" style="padding:6px 10px;" data-log-open="${safeNameAttr}">${t('openLog') || 'Open Log'}</button><button class="outline no-drag" style="padding:6px 10px; border-color:#ef4444; color:#ef4444;" data-log-del="${safeNameAttr}">${t('delete') || 'Delete'}</button></div>`;
+                item.innerHTML = `<div style="flex:1; cursor:pointer; min-width:0;"><div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${safeNameText}</div><div style="font-size:11px; opacity:0.7;">${formatBytes(f.size || 0)}</div></div><div style="display:flex; gap:8px;"><button class="outline no-drag" style="padding:6px 10px;" data-log-open="${safeNameAttr}">${escapeHtml(t('openLog') || 'Open Log')}</button><button class="outline no-drag" style="padding:6px 10px; border-color:#ef4444; color:#ef4444;" data-log-del="${safeNameAttr}">${escapeHtml(t('delete') || 'Delete')}</button></div>`;
                 item.querySelector('div').onclick = async () => { await window.electronAPI.openPath(f.path); };
                 const openBtn = item.querySelector('button[data-log-open]');
                 if (openBtn) {
@@ -887,11 +901,128 @@ function stringToColor(str) {
     return '#' + "00000".substring(0, 6 - c.length) + c;
 }
 
+function ensureProfileListEventsBound() {
+    if (__profileListEventsBound) return;
+    const listEl = document.getElementById('profileList');
+    if (!listEl) return;
+    __profileListEventsBound = true;
+
+    listEl.addEventListener('click', async (ev) => {
+        try {
+            const actionEl = ev.target && ev.target.closest ? ev.target.closest('[data-action]') : null;
+            if (!actionEl || !listEl.contains(actionEl)) return;
+            const action = actionEl.getAttribute('data-action');
+            if (!action) return;
+
+            // Buttons can be disabled; ignore.
+            if (actionEl instanceof HTMLButtonElement && actionEl.disabled) return;
+
+            const item = actionEl.closest('.profile-item');
+            const profileId = item ? item.getAttribute('data-profile-id') : null;
+            if (!profileId) return;
+
+            switch (action) {
+                case 'launch':
+                    await launch(profileId);
+                    break;
+                case 'restart':
+                    await restart(profileId);
+                    break;
+                case 'edit':
+                    openEditModal(profileId);
+                    break;
+                case 'open-log':
+                    await openProfileLogById(profileId);
+                    break;
+                case 'open-rotated-logs':
+                    await openRotatedLogsById(profileId);
+                    break;
+                case 'clear-logs':
+                    await clearProfileLogsById(profileId, false);
+                    break;
+                case 'clear-logs-history':
+                    await clearProfileLogsById(profileId, true);
+                    break;
+                case 'leak-check':
+                    await runLeakCheck(profileId);
+                    break;
+                case 'delete':
+                    remove(profileId);
+                    break;
+                case 'open-leak':
+                    await openLastLeakReportById(profileId);
+                    break;
+                default:
+                    break;
+            }
+        } catch (e) {
+            console.error('Profile list action failed:', e);
+        }
+    });
+
+    listEl.addEventListener('change', async (ev) => {
+        try {
+            if (!(ev.target instanceof HTMLSelectElement)) return;
+            const sel = ev.target;
+            if (sel.getAttribute('data-action') !== 'quick-pre-proxy') return;
+            const item = sel.closest('.profile-item');
+            const profileId = item ? item.getAttribute('data-profile-id') : null;
+            if (!profileId) return;
+            await quickUpdatePreProxy(profileId, sel.value);
+        } catch (e) {
+            console.error('Profile list change handler failed:', e);
+        }
+    });
+}
+
+function ensurePreProxyListEventsBound() {
+    if (__preProxyListEventsBound) return;
+    const listEl = document.getElementById('preProxyList');
+    if (!listEl) return;
+    __preProxyListEventsBound = true;
+
+    listEl.addEventListener('click', async (ev) => {
+        try {
+            const actionEl = ev.target && ev.target.closest ? ev.target.closest('[data-action]') : null;
+            if (!actionEl || !listEl.contains(actionEl)) return;
+            const action = actionEl.getAttribute('data-action');
+            const proxyId = actionEl.getAttribute('data-proxy-id');
+            if (!action || !proxyId) return;
+
+            if (action === 'proxy-test') {
+                await testSingleProxy(proxyId, actionEl);
+            } else if (action === 'proxy-edit') {
+                editPreProxy(proxyId);
+            } else if (action === 'proxy-delete') {
+                delP(proxyId);
+            }
+        } catch (e) {
+            console.error('Pre-proxy list action failed:', e);
+        }
+    });
+
+    listEl.addEventListener('change', (ev) => {
+        try {
+            if (!(ev.target instanceof HTMLInputElement)) return;
+            const input = ev.target;
+            if (input.getAttribute('data-action') !== 'proxy-select') return;
+            const proxyId = input.getAttribute('data-proxy-id');
+            if (!proxyId) return;
+
+            if (globalSettings.mode === 'single') selP(proxyId);
+            else togP(proxyId);
+        } catch (e) {
+            console.error('Pre-proxy list change handler failed:', e);
+        }
+    });
+}
+
 async function loadProfiles() {
     try {
         const profiles = await window.electronAPI.getProfiles();
         const runningIds = await window.electronAPI.getRunningIds();
         const listEl = document.getElementById('profileList');
+        ensureProfileListEventsBound();
 
         if (viewMode === 'grid') {
             listEl.classList.add('grid-view');
@@ -901,7 +1032,7 @@ async function loadProfiles() {
             document.getElementById('viewIcon').innerHTML = '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>';
         }
 
-        listEl.innerHTML = '';
+        listEl.textContent = '';
         const filtered = profiles.filter(p => {
             const text = searchText;
             // 搜索逻辑增强：支持搜标签
@@ -913,7 +1044,7 @@ async function loadProfiles() {
         if (filtered.length === 0) {
             const isSearch = searchText.length > 0;
             const msg = isSearch ? "No Search Results" : t('emptyStateMsg');
-            listEl.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg><div class="empty-state-text">${msg}</div></div>`;
+            listEl.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg><div class="empty-state-text">${escapeHtml(msg)}</div></div>`;
             return;
         }
 
@@ -928,33 +1059,247 @@ async function loadProfiles() {
             const lastLeak = p.diagnostics && p.diagnostics.lastLeakReport ? p.diagnostics.lastLeakReport : null;
             const leakStatus = lastLeak && lastLeak.summary && lastLeak.summary.webrtc === 'leak' ? 'red' : null;
             const leakText = lastLeak ? (lastLeak.summary && lastLeak.summary.errorCode ? 'ERR' : 'OK') : 'N/A';
-            const leakTagAttrs = lastLeak && lastLeak.path ? `style="border:1px solid ${leakStatus === 'red' ? '#ef4444' : 'var(--accent)'}; cursor:pointer;" onclick="openLastLeakReportById('${p.id}')"` : `style="border:1px solid ${leakStatus === 'red' ? '#ef4444' : 'var(--accent)'};"`;
             const lastErr = p.diagnostics && p.diagnostics.lastError ? p.diagnostics.lastError : null;
             const errText = lastErr ? `${lastErr.stage || 'err'}: ${(lastErr.message || '').slice(0, 60)}` : '';
 
-            // 渲染标签 HTML
-            let tagsHtml = '';
-            if (p.tags && p.tags.length > 0) {
-                tagsHtml = p.tags.map(tag =>
-                    `<span class="tag" style="background:${stringToColor(tag)}33; color:${stringToColor(tag)}; border:1px solid ${stringToColor(tag)}44;">${escapeHtml(tag)}</span>`
-                ).join('');
-            }
-
             const el = document.createElement('div');
             el.className = 'profile-item no-drag';
+            el.setAttribute('data-profile-id', p.id);
+
+            // Build DOM structure (no innerHTML for profile cards)
+            const infoEl = document.createElement('div');
+            infoEl.className = 'profile-info';
+
+            const topRow = document.createElement('div');
+            topRow.style.display = 'flex';
+            topRow.style.alignItems = 'center';
+
+            const nameEl = document.createElement('h4');
+            nameEl.textContent = p.name || '';
+
+            const statusEl = document.createElement('span');
+            statusEl.id = `status-${p.id}`;
+            statusEl.className = `running-badge ${isRunning ? 'active' : ''}`;
+            statusEl.textContent = isRestarting
+                ? (t('workingStatus') || 'Working...')
+                : (lastStatus === 'stop_failed' ? (t('stopFailedStatus') || 'Stop Failed') : (t('runningStatus') || 'Running'));
+
+            topRow.appendChild(nameEl);
+            topRow.appendChild(statusEl);
+            infoEl.appendChild(topRow);
+
+            const metaEl = document.createElement('div');
+            metaEl.className = 'profile-meta';
+
+            // user tags
+            if (p.tags && p.tags.length > 0) {
+                p.tags.forEach((tag) => {
+                    const color = stringToColor(tag);
+                    const span = document.createElement('span');
+                    span.className = 'tag';
+                    span.style.background = `${color}33`;
+                    span.style.color = color;
+                    span.style.border = `1px solid ${color}44`;
+                    span.textContent = tag;
+                    metaEl.appendChild(span);
+                });
+            }
+
+            // proxy protocol tag
+            {
+                const proto = ((p.proxyStr || '').split('://')[0] || 'N/A').toUpperCase();
+                const span = document.createElement('span');
+                span.className = 'tag';
+                span.textContent = proto;
+                metaEl.appendChild(span);
+            }
+
+            // engine tag
+            {
+                const span = document.createElement('span');
+                span.className = 'tag';
+                span.textContent = `${t('engineLabel') || 'Engine'}:${engine}`;
+                metaEl.appendChild(span);
+            }
+
+            // log size tag (async-filled)
+            {
+                const span = document.createElement('span');
+                span.className = 'tag';
+                span.id = `logsize-${p.id}`;
+                span.textContent = 'Log:...';
+                metaEl.appendChild(span);
+            }
+
+            // screen tag
+            {
+                const span = document.createElement('span');
+                span.className = 'tag';
+                span.textContent = `${screen.width}x${screen.height}`;
+                metaEl.appendChild(span);
+            }
+
+            // leak tag
+            {
+                const span = document.createElement('span');
+                span.className = 'tag';
+                const borderColor = leakStatus === 'red' ? '#ef4444' : 'var(--accent)';
+                span.style.border = `1px solid ${borderColor}`;
+                if (lastLeak && lastLeak.path) {
+                    span.style.cursor = 'pointer';
+                    span.dataset.action = 'open-leak';
+                }
+                span.textContent = `${t('leakStatus') || 'Leak'}:${leakText}`;
+                metaEl.appendChild(span);
+            }
+
+            // last error tag
+            if (lastErr) {
+                const span = document.createElement('span');
+                span.className = 'tag';
+                span.style.border = '1px solid #ef4444';
+                span.style.color = '#ef4444';
+                span.style.cursor = 'pointer';
+                span.dataset.action = 'open-log';
+                span.title = lastErr.message || '';
+                span.textContent = errText;
+                metaEl.appendChild(span);
+            }
+
+            // quick switch pre-proxy select
+            {
+                const wrapper = document.createElement('span');
+                wrapper.className = 'tag';
+                wrapper.style.border = '1px solid var(--accent)';
+
+                const sel = document.createElement('select');
+                sel.className = 'quick-switch-select no-drag';
+                sel.dataset.action = 'quick-pre-proxy';
+
+                const optDefault = document.createElement('option');
+                optDefault.value = 'default';
+                optDefault.textContent = t('qsDefault');
+                sel.appendChild(optDefault);
+
+                const optOn = document.createElement('option');
+                optOn.value = 'on';
+                optOn.textContent = t('qsOn');
+                sel.appendChild(optOn);
+
+                const optOff = document.createElement('option');
+                optOff.value = 'off';
+                optOff.textContent = t('qsOff');
+                sel.appendChild(optOff);
+
+                sel.value = override;
+                wrapper.appendChild(sel);
+                metaEl.appendChild(wrapper);
+            }
+
+            infoEl.appendChild(metaEl);
+            el.appendChild(infoEl);
+
+            const actionsEl = document.createElement('div');
+            actionsEl.className = 'actions';
+
+            const btnLaunch = document.createElement('button');
+            btnLaunch.className = 'no-drag';
+            btnLaunch.dataset.action = 'launch';
+            btnLaunch.textContent = t('launch');
+            btnLaunch.disabled = isRestarting;
+            actionsEl.appendChild(btnLaunch);
+
+            const btnRestart = document.createElement('button');
+            btnRestart.className = 'outline no-drag';
+            btnRestart.dataset.action = 'restart';
+            btnRestart.textContent = isRestarting ? (t('restarting') || 'Restarting...') : (t('restart') || 'Restart');
+            btnRestart.disabled = !(isRunning && !isRestarting);
+            actionsEl.appendChild(btnRestart);
+
+            if (lastStatus === 'stop_failed') {
+                const btnOpenLogRed = document.createElement('button');
+                btnOpenLogRed.className = 'outline no-drag';
+                btnOpenLogRed.dataset.action = 'open-log';
+                btnOpenLogRed.textContent = t('openLog') || 'Open Log';
+                btnOpenLogRed.style.borderColor = '#ef4444';
+                btnOpenLogRed.style.color = '#ef4444';
+                actionsEl.appendChild(btnOpenLogRed);
+
+                const btnRetry = document.createElement('button');
+                btnRetry.className = 'outline no-drag';
+                btnRetry.dataset.action = 'restart';
+                btnRetry.textContent = t('retry') || 'Retry';
+                btnRetry.title = t('openLog') || 'Open Log';
+                actionsEl.appendChild(btnRetry);
+            }
+
+            const btnEdit = document.createElement('button');
+            btnEdit.className = 'outline no-drag';
+            btnEdit.dataset.action = 'edit';
+            btnEdit.textContent = t('edit');
+            btnEdit.disabled = isRestarting;
+            actionsEl.appendChild(btnEdit);
+
+            const btnOpenLog = document.createElement('button');
+            btnOpenLog.className = 'outline no-drag';
+            btnOpenLog.dataset.action = 'open-log';
+            btnOpenLog.textContent = t('openLog') || 'Open Log';
+            btnOpenLog.disabled = isRestarting;
+            actionsEl.appendChild(btnOpenLog);
+
+            const btnRotated = document.createElement('button');
+            btnRotated.className = 'outline no-drag';
+            btnRotated.dataset.action = 'open-rotated-logs';
+            btnRotated.textContent = t('rotatedLogsBtn') || 'Rotated';
+            btnRotated.disabled = isRestarting;
+            actionsEl.appendChild(btnRotated);
+
+            const btnClear = document.createElement('button');
+            btnClear.className = 'outline no-drag';
+            btnClear.dataset.action = 'clear-logs';
+            btnClear.textContent = t('clearLogs') || 'Clear Logs';
+            btnClear.disabled = isRunning || isRestarting;
+            actionsEl.appendChild(btnClear);
+
+            const btnClearHistory = document.createElement('button');
+            btnClearHistory.className = 'outline no-drag';
+            btnClearHistory.dataset.action = 'clear-logs-history';
+            btnClearHistory.textContent = t('clearLogsHistory') || 'Clear+History';
+            btnClearHistory.title = t('clearLogsHistoryHint') || 'Also removes rotated history logs';
+            btnClearHistory.disabled = isRunning || isRestarting;
+            actionsEl.appendChild(btnClearHistory);
+
+            const btnLeakCheck = document.createElement('button');
+            btnLeakCheck.className = 'outline no-drag';
+            btnLeakCheck.dataset.action = 'leak-check';
+            btnLeakCheck.textContent = t('leakCheck') || 'LeakCheck';
+            btnLeakCheck.disabled = !(isRunning && !isRestarting);
+            actionsEl.appendChild(btnLeakCheck);
+
+            const btnDelete = document.createElement('button');
+            btnDelete.className = 'danger no-drag';
+            btnDelete.dataset.action = 'delete';
+            btnDelete.textContent = t('delete');
+            btnDelete.disabled = isRestarting;
+            actionsEl.appendChild(btnDelete);
+
+            el.appendChild(actionsEl);
+
+            // Legacy innerHTML renderer (kept for reference; disabled)
+            /*
             el.innerHTML = `
                 <div class="profile-info">
-                    <div style="display:flex; align-items:center;"><h4>${escapeHtml(p.name)}</h4><span id="status-${p.id}" class="running-badge ${isRunning ? 'active' : ''}">${isRestarting ? (t('workingStatus') || 'Working...') : (lastStatus === 'stop_failed' ? (t('stopFailedStatus') || 'Stop Failed') : t('runningStatus'))}</span></div>
+                    <div style="display:flex; align-items:center;"><h4>${escapeHtml(p.name)}</h4><span id="status-${escapeAttr(p.id)}" class="running-badge ${isRunning ? 'active' : ''}">${isRestarting ? (t('workingStatus') || 'Working...') : (lastStatus === 'stop_failed' ? (t('stopFailedStatus') || 'Stop Failed') : t('runningStatus'))}</span></div>
                     <div class="profile-meta">
                         ${tagsHtml} <!-- 插入标签 -->
                         <span class="tag">${escapeHtml((p.proxyStr || '').split('://')[0].toUpperCase() || 'N/A')}</span>
                         <span class="tag">${t('engineLabel') || 'Engine'}:${escapeHtml(engine)}</span>
-                        <span class="tag" id="logsize-${p.id}">Log:...</span>
+                        <span class="tag" id="logsize-${escapeAttr(p.id)}">Log:...</span>
                         <span class="tag">${screen.width}x${screen.height}</span>
                         <span class="tag" ${leakTagAttrs}>${t('leakStatus') || 'Leak'}:${leakText}</span>
-                        ${lastErr ? `<span class="tag" style="border:1px solid #ef4444;color:#ef4444;cursor:pointer;" onclick="openProfileLogById('${p.id}')" title="${escapeAttr(lastErr.message || '')}">${escapeHtml(errText)}</span>` : ''}
+                        ${lastErr ? `<span class="tag" style="border:1px solid #ef4444;color:#ef4444;cursor:pointer;" data-action="open-log" title="${escapeAttr(lastErr.message || '')}">${escapeHtml(errText)}</span>` : ''}
                         <span class="tag" style="border:1px solid var(--accent);">
-                            <select class="quick-switch-select no-drag" onchange="quickUpdatePreProxy('${p.id}', this.value)">
+                            <select class="quick-switch-select no-drag" data-action="quick-pre-proxy">
                                 <option value="default" ${override === 'default' ? 'selected' : ''}>${t('qsDefault')}</option>
                                 <option value="on" ${override === 'on' ? 'selected' : ''}>${t('qsOn')}</option>
                                 <option value="off" ${override === 'off' ? 'selected' : ''}>${t('qsOff')}</option>
@@ -962,8 +1307,9 @@ async function loadProfiles() {
                         </span>
                     </div>
                 </div>
-                <div class="actions"><button onclick="launch('${p.id}')" class="no-drag" ${isRestarting ? 'disabled' : ''}>${t('launch')}</button><button class="outline no-drag" onclick="restart('${p.id}')" ${isRunning && !isRestarting ? '' : 'disabled'}>${isRestarting ? (t('restarting') || 'Restarting...') : (t('restart') || 'Restart')}</button>${lastStatus === 'stop_failed' ? `<button class="outline no-drag" onclick="openProfileLogById('${p.id}')" style="border-color:#ef4444;color:#ef4444;">${t('openLog') || 'Open Log'}</button><button class="outline no-drag" onclick="restart('${p.id}')" title=\"${t('openLog') || 'Open Log'}\">${t('retry') || 'Retry'}</button>` : ''}<button class="outline no-drag" onclick="openEditModal('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('edit')}</button><button class="outline no-drag" onclick="openProfileLogById('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('openLog') || 'Open Log'}</button><button class="outline no-drag" onclick="openRotatedLogsById('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('rotatedLogsBtn') || 'Rotated'}</button><button class="outline no-drag" onclick="clearProfileLogsById('${p.id}')" ${isRunning || isRestarting ? 'disabled' : ''}>${t('clearLogs') || 'Clear Logs'}</button><button class="outline no-drag" onclick="clearProfileLogsById('${p.id}', true)" ${isRunning || isRestarting ? 'disabled' : ''} title="${t('clearLogsHistoryHint') || 'Also removes rotated history logs'}">${t('clearLogsHistory') || 'Clear+History'}</button><button class="outline no-drag" onclick="runLeakCheck('${p.id}')" ${isRunning && !isRestarting ? '' : 'disabled'}>${t('leakCheck') || 'LeakCheck'}</button><button class="danger no-drag" onclick="remove('${p.id}')" ${isRestarting ? 'disabled' : ''}>${t('delete')}</button></div>
+                <div class="actions"><button data-action="launch" class="no-drag" ${isRestarting ? 'disabled' : ''}>${t('launch')}</button><button class="outline no-drag" data-action="restart" ${isRunning && !isRestarting ? '' : 'disabled'}>${isRestarting ? (t('restarting') || 'Restarting...') : (t('restart') || 'Restart')}</button>${lastStatus === 'stop_failed' ? `<button class="outline no-drag" data-action="open-log" style="border-color:#ef4444;color:#ef4444;">${t('openLog') || 'Open Log'}</button><button class="outline no-drag" data-action="restart" title=\"${t('openLog') || 'Open Log'}\">${t('retry') || 'Retry'}</button>` : ''}<button class="outline no-drag" data-action="edit" ${isRestarting ? 'disabled' : ''}>${t('edit')}</button><button class="outline no-drag" data-action="open-log" ${isRestarting ? 'disabled' : ''}>${t('openLog') || 'Open Log'}</button><button class="outline no-drag" data-action="open-rotated-logs" ${isRestarting ? 'disabled' : ''}>${t('rotatedLogsBtn') || 'Rotated'}</button><button class="outline no-drag" data-action="clear-logs" ${isRunning || isRestarting ? 'disabled' : ''}>${t('clearLogs') || 'Clear Logs'}</button><button class="outline no-drag" data-action="clear-logs-history" ${isRunning || isRestarting ? 'disabled' : ''} title="${t('clearLogsHistoryHint') || 'Also removes rotated history logs'}">${t('clearLogsHistory') || 'Clear+History'}</button><button class="outline no-drag" data-action="leak-check" ${isRunning && !isRestarting ? '' : 'disabled'}>${t('leakCheck') || 'LeakCheck'}</button><button class="danger no-drag" data-action="delete" ${isRestarting ? 'disabled' : ''}>${t('delete')}</button></div>
             `;
+            */
             listEl.appendChild(el);
             // async log size fill (non-blocking)
             setTimeout(async () => {
@@ -1351,8 +1697,9 @@ function renderGroupTabs() {
 function switchProxyGroup(gid) { currentProxyGroup = gid; renderGroupTabs(); }
 
 function renderProxyNodes() {
+    ensurePreProxyListEventsBound();
     const modeSel = document.getElementById('proxyMode');
-    if (modeSel.options.length === 0) modeSel.innerHTML = `<option value="single">${t('modeSingle')}</option><option value="balance">${t('modeBalance')}</option><option value="failover">${t('modeFailover')}</option>`;
+    if (modeSel.options.length === 0) modeSel.innerHTML = `<option value="single">${escapeHtml(t('modeSingle'))}</option><option value="balance">${escapeHtml(t('modeBalance'))}</option><option value="failover">${escapeHtml(t('modeFailover'))}</option>`;
     modeSel.value = globalSettings.mode || 'single';
     document.getElementById('notifySwitch').checked = globalSettings.notify || false;
 
@@ -1362,7 +1709,7 @@ function renderProxyNodes() {
     });
 
     const listEl = document.getElementById('preProxyList');
-    listEl.innerHTML = '';
+    listEl.textContent = '';
 
     const groupName = currentProxyGroup === 'manual' ? t('groupManual') : (globalSettings.subscriptions.find(s => s.id === currentProxyGroup)?.name || 'Sub');
     document.getElementById('currentGroupTitle').innerText = `${groupName} (${list.length})`;
@@ -1383,67 +1730,129 @@ function renderProxyNodes() {
     if (btnRollbackSub) btnRollbackSub.style.display = (!isManual && currentSub && currentSub.snapshots && currentSub.snapshots.length > 0) ? 'inline-block' : 'none';
 
     list.forEach(p => {
-        const div = document.createElement('div');
-        div.className = 'proxy-row no-drag';
+        const row = document.createElement('div');
+        row.className = 'proxy-row no-drag';
+
         const isSel = globalSettings.mode === 'single' && globalSettings.selectedId === p.id;
-        if (isSel) div.style.background = "rgba(0,224,255,0.08)";
+        if (isSel) row.style.background = "rgba(0,224,255,0.08)";
 
         const inputType = globalSettings.mode === 'single' ? 'radio' : 'checkbox';
         const checked = globalSettings.mode === 'single' ? isSel : (p.enable !== false);
-        const onchange = globalSettings.mode === 'single' ? `selP('${p.id}')` : `togP('${p.id}')`;
-        const inputHtml = `<input type="${inputType}" name="ps" ${checked ? 'checked' : ''} onchange="${onchange}" style="cursor:pointer; margin:0;" class="no-drag">`;
 
-        let latHtml = '';
-        if (p.latency !== undefined) {
-            if (p.latency === -1 || p.latency === 9999) latHtml = `<span class="proxy-latency" style="border:1px solid #e74c3c; color:#e74c3c;">Fail</span>`;
-            else {
-                const color = p.latency < 500 ? '#27ae60' : (p.latency < 1000 ? '#f39c12' : '#e74c3c');
-                latHtml = `<span class="proxy-latency" style="border:1px solid ${color}; color:${color};">${p.latency}ms</span>`;
-            }
-        } else {
-            latHtml = `<span class="proxy-latency" style="border:1px solid var(--text-secondary); opacity:0.3;">-</span>`;
-        }
+        const left = document.createElement('div');
+        left.className = 'proxy-left';
+        const input = document.createElement('input');
+        input.type = inputType;
+        input.name = 'ps';
+        input.checked = checked;
+        input.dataset.action = 'proxy-select';
+        input.dataset.proxyId = p.id;
+        input.style.cssText = 'cursor:pointer; margin:0;';
+        input.className = 'no-drag';
+        left.appendChild(input);
+
+        const mid = document.createElement('div');
+        mid.className = 'proxy-mid';
+
+        const header = document.createElement('div');
+        header.className = 'proxy-header';
 
         const proto = (p.url.split('://')[0] || 'UNK').toUpperCase();
         let displayRemark = p.remark;
         if (!displayRemark || displayRemark.trim() === '') displayRemark = 'Node';
-        const safeProto = escapeHtml(proto);
-        const safeRemarkText = escapeHtml(displayRemark);
-        const safeRemarkAttr = escapeAttr(displayRemark);
 
-        let healthTitle = '';
+        const protoSpan = document.createElement('span');
+        protoSpan.className = 'proxy-proto';
+        protoSpan.textContent = proto;
+
+        const remarkSpan = document.createElement('span');
+        remarkSpan.className = 'proxy-remark';
+        remarkSpan.title = displayRemark;
+        remarkSpan.textContent = displayRemark;
+
+        const latencySpan = document.createElement('span');
+        latencySpan.className = 'proxy-latency';
+        if (p.latency !== undefined) {
+            if (p.latency === -1 || p.latency === 9999) {
+                latencySpan.style.border = '1px solid #e74c3c';
+                latencySpan.style.color = '#e74c3c';
+                latencySpan.textContent = 'Fail';
+            } else {
+                const color = p.latency < 500 ? '#27ae60' : (p.latency < 1000 ? '#f39c12' : '#e74c3c');
+                latencySpan.style.border = `1px solid ${color}`;
+                latencySpan.style.color = color;
+                latencySpan.textContent = `${p.latency}ms`;
+            }
+        } else {
+            latencySpan.style.border = '1px solid var(--text-secondary)';
+            latencySpan.style.opacity = '0.3';
+            latencySpan.textContent = '-';
+        }
+
+        header.appendChild(protoSpan);
+        header.appendChild(remarkSpan);
+        header.appendChild(latencySpan);
+
         if (p.lastTestAt) {
             const timeStr = new Date(p.lastTestAt).toLocaleString();
             const okStr = p.lastTestOk ? 'OK' : 'FAIL';
             const codeStr = p.lastTestCode ? ` [${p.lastTestCode}]` : '';
             const msgStr = p.lastTestMsg ? ` - ${p.lastTestMsg}` : '';
-            healthTitle = `${okStr}${codeStr} @ ${timeStr}${msgStr}`;
-        }
-        const healthDot = p.lastTestAt ? `<span title="${escapeAttr(healthTitle)}" style="display:inline-block; width:7px; height:7px; border-radius:50%; background:${p.lastTestOk ? '#27ae60' : '#e74c3c'}; margin-left:8px; vertical-align:middle;"></span>` : '';
+            const healthTitle = `${okStr}${codeStr} @ ${timeStr}${msgStr}`;
 
-        let ipBadge = '';
+            const healthDot = document.createElement('span');
+            healthDot.title = healthTitle;
+            healthDot.style.cssText = `display:inline-block; width:7px; height:7px; border-radius:50%; background:${p.lastTestOk ? '#27ae60' : '#e74c3c'}; margin-left:8px; vertical-align:middle;`;
+            header.appendChild(healthDot);
+        }
+
+        mid.appendChild(header);
+
         if (p.ipInfo && (p.ipInfo.country || p.ipInfo.timezone || p.ipInfo.ip)) {
             const parts = [];
             if (p.ipInfo.ip) parts.push(p.ipInfo.ip);
             if (p.ipInfo.country) parts.push(p.ipInfo.country);
             if (p.ipInfo.timezone) parts.push(p.ipInfo.timezone);
             const text = parts.join(' · ');
-            ipBadge = `<div class="proxy-sub" style="margin-top:4px; font-size:11px; color: var(--text-secondary);" title="${escapeAttr(text)}">${escapeHtml(text)}</div>`;
+
+            const ipBadge = document.createElement('div');
+            ipBadge.className = 'proxy-sub';
+            ipBadge.style.cssText = 'margin-top:4px; font-size:11px; color: var(--text-secondary);';
+            ipBadge.title = text;
+            ipBadge.textContent = text;
+            mid.appendChild(ipBadge);
         }
 
-        div.innerHTML = `
-            <div class="proxy-left">${inputHtml}</div>
-            <div class="proxy-mid">
-                <div class="proxy-header"><span class="proxy-proto">${safeProto}</span><span class="proxy-remark" title="${safeRemarkAttr}">${safeRemarkText}</span>${latHtml}${healthDot}</div>
-                ${ipBadge}
-            </div>
-            <div class="proxy-right">
-                <button class="outline no-drag" onclick="testSingleProxy('${p.id}')">${t('btnTest')}</button>
-                ${isManual ? `<button class="outline no-drag" onclick="editPreProxy('${p.id}')">${t('btnEdit')}</button>` : ''}
-                <button class="danger no-drag" onclick="delP('${p.id}')">✕</button>
-            </div>
-        `;
-        listEl.appendChild(div);
+        const right = document.createElement('div');
+        right.className = 'proxy-right';
+
+        const btnTest = document.createElement('button');
+        btnTest.className = 'outline no-drag';
+        btnTest.dataset.action = 'proxy-test';
+        btnTest.dataset.proxyId = p.id;
+        btnTest.textContent = t('btnTest');
+        right.appendChild(btnTest);
+
+        if (isManual) {
+            const btnEdit = document.createElement('button');
+            btnEdit.className = 'outline no-drag';
+            btnEdit.dataset.action = 'proxy-edit';
+            btnEdit.dataset.proxyId = p.id;
+            btnEdit.textContent = t('btnEdit');
+            right.appendChild(btnEdit);
+        }
+
+        const btnDel = document.createElement('button');
+        btnDel.className = 'danger no-drag';
+        btnDel.dataset.action = 'proxy-delete';
+        btnDel.dataset.proxyId = p.id;
+        btnDel.textContent = '✕';
+        right.appendChild(btnDel);
+
+        row.appendChild(left);
+        row.appendChild(mid);
+        row.appendChild(right);
+        listEl.appendChild(row);
     });
 
     const btnDone = document.querySelector('#proxyModal button[data-i18n="done"]');
@@ -1675,10 +2084,12 @@ async function rollbackSubscriptionNodes(subId) {
     });
 }
 
-async function testSingleProxy(id) {
+async function testSingleProxy(id, btnEl = null) {
     const p = globalSettings.preProxies.find(x => x.id === id);
     if (!p) return;
-    const btn = Array.from(document.querySelectorAll('#preProxyList button.outline')).find(el => el.onclick.toString().includes(id));
+    const btn = (btnEl instanceof HTMLButtonElement)
+        ? btnEl
+        : Array.from(document.querySelectorAll('#preProxyList button[data-action="proxy-test"]')).find(el => el.getAttribute('data-proxy-id') === id);
     if (btn) btn.innerText = "...";
     try {
         const res = await window.electronAPI.invoke('test-proxy-node', p.url);
@@ -1711,7 +2122,7 @@ async function testCurrentGroup() {
 
     // 先将所有测试按钮设置为加载状态
     list.forEach(p => {
-        const btn = Array.from(document.querySelectorAll('#preProxyList button.outline')).find(el => el.onclick && el.onclick.toString().includes(p.id));
+        const btn = Array.from(document.querySelectorAll('#preProxyList button[data-action="proxy-test"]')).find(el => el.getAttribute('data-proxy-id') === p.id);
         if (btn) btn.innerText = "...";
     });
 
@@ -2604,9 +3015,15 @@ function initCustomTimezoneDropdown(inputId, dropdownId) {
             tz.toLowerCase().includes(filter.toLowerCase())
         );
 
-        dropdown.innerHTML = filtered.map((tz, index) =>
-            `<div class="timezone-item" data-value="${tz}" data-index="${index}">${tz}</div>`
-        ).join('');
+        dropdown.textContent = '';
+        filtered.forEach((tz, index) => {
+            const el = document.createElement('div');
+            el.className = 'timezone-item';
+            el.dataset.value = tz;
+            el.dataset.index = String(index);
+            el.textContent = tz;
+            dropdown.appendChild(el);
+        });
 
         selectedIndex = -1;
     }

@@ -431,8 +431,10 @@ function parseSingboxJson(content) {
         if (!host || !port) continue;
         const user = safeTrim(o.username);
         const pass = safeTrim(o.password);
+        const tls = o.tls && typeof o.tls === 'object' ? o.tls : null;
+        const scheme = tls && tls.enabled ? 'https' : 'http';
         const auth = user ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : '';
-        const raw = `http://${auth}${formatHostForUri(host)}:${port}`;
+        const raw = `${scheme}://${auth}${formatHostForUri(host)}:${port}`;
         nodes.push({ id: `node-${sha1Hex(raw).slice(0, 12)}`, raw, name: tag });
         idx++;
         continue;

@@ -34,56 +34,44 @@ function parseHttpOrSocksUrl(raw) {
   };
 }
 
-function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
+function stripIpv6Brackets(host) {
+  const h = String(host || '').trim();
+  if (!h) return '';
+  if (h.startsWith('[') && h.endsWith(']')) return h.slice(1, -1);
+  return h;
+}
+
+function buildSingboxOutboundFromProxySpec(spec, tag = 'proxy') {
   if (!spec || typeof spec !== 'object') throw new Error('Invalid ProxySpec');
-  if (typeof localSocksPort !== 'number') throw new Error('Invalid localSocksPort');
+  const raw = String(spec.raw || '').trim();
+  if (!raw) throw Object.assign(new Error('Proxy input is empty'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
 
-  // Minimal config: socks inbound + single outbound
-  const config = {
-    log: { level: 'warn' },
-    inbounds: [
-      {
-        type: 'socks',
-        tag: 'in-socks',
-        listen: '127.0.0.1',
-        listen_port: localSocksPort,
-        sniff: true,
-      },
-    ],
-    outbounds: [],
-    route: {
-      rules: [{ inbound: ['in-socks'], outbound: 'proxy' }],
-      final: 'proxy',
-    },
-  };
-
-  const raw = spec.raw || '';
   const protocol = spec.protocol || 'unknown';
-  if (raw.startsWith('socks5://')) {
+  const outTag = isNonEmptyString(tag) ? tag : 'proxy';
+
+  if (raw.startsWith('socks5://') || raw.startsWith('socks://')) {
     const o = parseHttpOrSocksUrl(raw);
-    config.outbounds.push({
+    return {
       type: 'socks',
-      tag: 'proxy',
+      tag: outTag,
       server: o.server,
       server_port: o.server_port,
       username: o.username,
       password: o.password,
-    });
-    return config;
+    };
   }
 
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
     const o = parseHttpOrSocksUrl(raw);
-    config.outbounds.push({
+    return {
       type: 'http',
-      tag: 'proxy',
+      tag: outTag,
       server: o.server,
       server_port: o.server_port,
       username: o.username,
       password: o.password,
       tls: raw.startsWith('https://') ? { enabled: true } : undefined,
-    });
-    return config;
+    };
   }
 
   if (raw.startsWith('vless://')) {
@@ -94,7 +82,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
 
     const outbound = {
       type: 'vless',
-      tag: 'proxy',
+      tag: outTag,
       server: u.hostname,
       server_port: u.port ? Number(u.port) : 443,
       uuid: safeDecodeUrlComponent(u.username),
@@ -111,13 +99,15 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
         insecure: true,
       };
     } else if (security === 'reality') {
+      const publicKey = params.get('pbk') || '';
+      if (!publicKey) throw Object.assign(new Error('Invalid vless reality public key (pbk)'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
       outbound.tls = {
         enabled: true,
         server_name: params.get('sni') || params.get('host') || u.hostname,
         insecure: true,
         reality: {
           enabled: true,
-          public_key: params.get('pbk') || '',
+          public_key: publicKey,
           short_id: params.get('sid') || '',
         },
         utls: {
@@ -145,10 +135,15 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
         path: params.get('path') || '/',
         host: params.get('host') ? [params.get('host')] : undefined,
       };
+    } else if (transport === 'h2' || transport === 'http') {
+      outbound.transport = {
+        type: 'http',
+        path: params.get('path') || '/',
+        host: params.get('host') ? String(params.get('host')).split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      };
     }
 
-    config.outbounds.push(outbound);
-    return config;
+    return outbound;
   }
 
   if (raw.startsWith('trojan://')) {
@@ -159,7 +154,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
 
     const outbound = {
       type: 'trojan',
-      tag: 'proxy',
+      tag: outTag,
       server: u.hostname,
       server_port: u.port ? Number(u.port) : 443,
       password: safeDecodeUrlComponent(u.username),
@@ -182,10 +177,15 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
         type: 'grpc',
         service_name: params.get('serviceName') || '',
       };
+    } else if (transport === 'h2' || transport === 'http') {
+      outbound.transport = {
+        type: 'http',
+        path: params.get('path') || '/',
+        host: params.get('host') ? String(params.get('host')).split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      };
     }
 
-    config.outbounds.push(outbound);
-    return config;
+    return outbound;
   }
 
   if (raw.startsWith('hysteria2://') || raw.startsWith('hy2://')) {
@@ -200,7 +200,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
 
     const outbound = {
       type: 'hysteria2',
-      tag: 'proxy',
+      tag: outTag,
       server: u.hostname,
       server_port: u.port ? Number(u.port) : 443,
       password,
@@ -233,8 +233,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       };
     }
 
-    config.outbounds.push(outbound);
-    return config;
+    return outbound;
   }
 
   if (raw.startsWith('tuic://')) {
@@ -250,7 +249,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
 
     const outbound = {
       type: 'tuic',
-      tag: 'proxy',
+      tag: outTag,
       server: u.hostname,
       server_port: u.port ? Number(u.port) : 443,
       uuid,
@@ -270,8 +269,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       if (alpn.length > 0) outbound.tls.alpn = alpn;
     }
 
-    config.outbounds.push(outbound);
-    return config;
+    return outbound;
   }
 
   if (raw.startsWith('ss://')) {
@@ -291,7 +289,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       try {
         const decoded = Base64.decode(userInfo.replace(/-/g, '+').replace(/_/g, '/'));
         if (decoded.includes(':')) return decoded;
-      } catch (e) {}
+      } catch (e) { }
       return null;
     };
 
@@ -308,14 +306,15 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       method = userInfo.slice(0, idx);
       password = userInfo.slice(idx + 1);
       const lastColonIndex = hostPart.lastIndexOf(':');
-      host = hostPart.substring(0, lastColonIndex);
+      if (lastColonIndex < 0) throw Object.assign(new Error('Invalid ss host:port'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+      host = stripIpv6Brackets(hostPart.substring(0, lastColonIndex));
       port = Number(hostPart.substring(lastColonIndex + 1));
     } else {
       // Entire string may be base64 of method:pass@host:port
       let decoded = null;
       try {
         decoded = Base64.decode(clean.replace(/-/g, '+').replace(/_/g, '/'));
-      } catch (e) {}
+      } catch (e) { }
       if (!decoded || !decoded.includes('@') || !decoded.includes(':')) {
         throw Object.assign(new Error('Invalid ss format'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
       }
@@ -324,19 +323,19 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       method = userInfo.slice(0, idx);
       password = userInfo.slice(idx + 1);
       const lastColonIndex = hostPart.lastIndexOf(':');
-      host = hostPart.substring(0, lastColonIndex);
+      if (lastColonIndex < 0) throw Object.assign(new Error('Invalid ss host:port'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+      host = stripIpv6Brackets(hostPart.substring(0, lastColonIndex));
       port = Number(hostPart.substring(lastColonIndex + 1));
     }
 
-    config.outbounds.push({
+    return {
       type: 'shadowsocks',
-      tag: 'proxy',
+      tag: outTag,
       server: host,
       server_port: port,
       method,
       password,
-    });
-    return config;
+    };
   }
 
   if (raw.startsWith('vmess://')) {
@@ -364,7 +363,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
 
     const outbound = {
       type: 'vmess',
-      tag: 'proxy',
+      tag: outTag,
       server,
       server_port: port,
       uuid,
@@ -402,13 +401,55 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       };
     }
 
-    config.outbounds.push(outbound);
-    return config;
+    return outbound;
   }
 
   throw Object.assign(new Error(`sing-box mapping not implemented for protocol: ${protocol}`), {
     code: 'SINGBOX_UNSUPPORTED_PROTOCOL',
   });
+}
+
+function buildSingboxConfigFromProxySpec(spec, localSocksPort, options = {}) {
+  if (!spec || typeof spec !== 'object') throw new Error('Invalid ProxySpec');
+  if (typeof localSocksPort !== 'number') throw new Error('Invalid localSocksPort');
+
+  // Backward-compatible: allow passing preProxySpec directly as the 3rd argument.
+  const opts = options && typeof options === 'object' && options.raw && options.schemaVersion
+    ? { preProxySpec: options }
+    : (options || {});
+
+  // Minimal config: socks inbound + outbound(s)
+  const config = {
+    log: { level: 'warn' },
+    inbounds: [
+      {
+        type: 'socks',
+        tag: 'in-socks',
+        listen: '127.0.0.1',
+        listen_port: localSocksPort,
+        sniff: true,
+      },
+    ],
+    outbounds: [],
+    route: {
+      rules: [{ inbound: ['in-socks'], outbound: 'proxy' }],
+      final: 'proxy',
+    },
+  };
+
+  const mainOutbound = buildSingboxOutboundFromProxySpec(spec, 'proxy');
+  const preSpec = opts && opts.preProxySpec && typeof opts.preProxySpec === 'object' ? opts.preProxySpec : null;
+
+  if (preSpec) {
+    const preOutbound = buildSingboxOutboundFromProxySpec(preSpec, 'pre');
+    // sing-box outbound chaining uses "detour"
+    mainOutbound.detour = 'pre';
+    config.outbounds.push(preOutbound, mainOutbound);
+    return config;
+  }
+
+  config.outbounds.push(mainOutbound);
+  return config;
 }
 
 module.exports = { buildSingboxConfigFromProxySpec };

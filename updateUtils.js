@@ -24,10 +24,36 @@ function parseHttpsUrlOrThrow(input) {
   return u;
 }
 
+function getGhProxyTargetUrl(u) {
+  if (!u || typeof u !== 'object' || u.hostname !== 'gh-proxy.com') return null;
+  const raw = (u.pathname || '').replace(/^\/+/, '');
+  if (!raw) return null;
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (!decoded.startsWith('https://')) return null;
+    return new URL(decoded);
+  } catch (e) {
+    return null;
+  }
+}
+
 function assertAllowedUpdateUrl(u) {
   if (!u || typeof u !== 'object') throw new Error('Invalid URL');
   if (!UPDATE_ALLOWED_DOWNLOAD_HOSTS.has(u.hostname)) {
     throw new Error(`Download host not allowed: ${u.hostname}`);
+  }
+
+  // gh-proxy.com can proxy arbitrary URLs via path payloads like:
+  //   https://gh-proxy.com/https://github.com/...
+  // Enforce that the embedded target URL is also within our allowlist.
+  if (u.hostname === 'gh-proxy.com') {
+    const target = getGhProxyTargetUrl(u);
+    if (!target) throw new Error('Invalid gh-proxy URL (missing target URL)');
+    if (target.protocol !== 'https:') throw new Error('Only https proxy targets are allowed');
+    if (target.hostname === 'gh-proxy.com') throw new Error('Nested gh-proxy targets are not allowed');
+    if (!UPDATE_ALLOWED_DOWNLOAD_HOSTS.has(target.hostname)) {
+      throw new Error(`Download host not allowed (proxy target): ${target.hostname}`);
+    }
   }
 }
 
@@ -202,6 +228,12 @@ function downloadFile(url, dest, options = {}) {
   return doRequest(url, maxRedirects);
 }
 
+function validateUpdateDownloadUrl(url) {
+  const u = parseHttpsUrlOrThrow(url);
+  assertAllowedUpdateUrl(u);
+  return u;
+}
+
 function extractZip(zipPath, destDir, options = {}) {
   return new Promise((resolve, reject) => {
     try {
@@ -279,5 +311,5 @@ module.exports = {
   extractZip,
   isZipFileHeader,
   sha256FileHex,
+  validateUpdateDownloadUrl,
 };
-

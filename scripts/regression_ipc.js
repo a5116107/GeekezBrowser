@@ -68,6 +68,13 @@ async function main() {
       await fs.writeJson(cfgPath, cfg, { spaces: 2 });
       await checkConfig(cfgPath);
     }
+
+    // pre-proxy chaining (detour) should be accepted by `sing-box check`
+    const preProxySpec = normalizeProxySpec('socks5://user:pass@1.2.3.4:1080');
+    const chained = buildSingboxConfigFromProxySpec(normalizeProxySpec(samples[0]), 21000, { preProxySpec });
+    const chainedPath = path.join(logsDir, 'sb_reg_preproxy.json');
+    await fs.writeJson(chainedPath, chained, { spaces: 2 });
+    await checkConfig(chainedPath);
     console.log('[ok] sing-box configs validated via `sing-box check`');
   } else {
     console.log('[skip] sing-box.exe not present; skipped config check');
