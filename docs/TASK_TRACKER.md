@@ -636,3 +636,12 @@
 - acceptance:
   - 启用 API 后可在设置页看到 token
   - 点击复制提示 `apiTokenCopied`
+
+### DOC-2：README 补充 API Token 使用说明
+- id: `DOC-2`
+- status: `DONE`
+- owner: `Codex`
+- scope: 更新 `README.md` 与 `docs/README_zh.md`，说明 API 需携带 `X-GeekEZ-API-Token` 并给出 curl 示例
+- acceptance:
+  - 文档包含 header 名称 `X-GeekEZ-API-Token`
+  - 给出 curl 示例

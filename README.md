@@ -56,6 +56,7 @@ It is designed to help e-commerce operators (Amazon, TikTok, Facebook, Shopee, e
 *   **Tag System**: Organize profiles with custom color tags (e.g., "TikTok", "USA", "Main Account").
 *   **Safe Identification**: Uses **Dynamic Watermark** to display profile names (e.g., `Profile-1`) at the top of the page. 
 *   **Multi-Opening**: Running multiple profiles simultaneously with independent ports and processes.
+*   **REST API Server** (Advanced): Optional local HTTP API for external profile management (`/api/*`). Auth via `X-GeekEZ-API-Token` (Settings → Developer Features → API). Example: `curl -H "X-GeekEZ-API-Token: <token>" http://localhost:12138/api/status`
 *   **Remote Debugging Port** (Advanced): Optional external Puppeteer/DevTools connection for automation.
 
 ## 🚀 Quick Start

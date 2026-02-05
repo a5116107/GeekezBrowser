@@ -53,6 +53,7 @@
 *   **标签系统**: 为环境添加彩色标签（如 "TikTok", "美国", "主号"），便于分组管理。
 *   **安全备注**: 使用 **动态水印** 在页面上方显示环境名称（如 `Profile-1`）。
 *   **稳定多开**: 支持同时运行多个环境，端口和进程完全独立互不干扰。
+*   **REST API 服务 (高级)**: 可选启用本地 HTTP API（`/api/*`）用于外部管理环境。请求需携带 `X-GeekEZ-API-Token`（设置 → Developer Features → API 可复制）。示例：`curl -H "X-GeekEZ-API-Token: <token>" http://localhost:12138/api/status`
 *   **远程调试端口 (高级)**: 可选开启外部 Puppeteer/DevTools 连接，支持自动化控制（默认关闭以降低风险）。
 
 ## 🚀 快速开始
