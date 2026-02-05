@@ -1,12 +1,12 @@
 const http = require('http');
 const https = require('https');
 
-function fetchJson(url, timeoutMs) {
+function fetchJson(url, timeoutMs, agent) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https:') ? https : http;
     const req = lib.get(
       url,
-      { headers: { 'User-Agent': 'GeekEZBrowser-ProxyTest', 'Accept': 'application/json,*/*' } },
+      { headers: { 'User-Agent': 'GeekEZBrowser-ProxyTest', 'Accept': 'application/json,*/*' }, agent },
       (res) => {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
@@ -28,13 +28,13 @@ function fetchJson(url, timeoutMs) {
   });
 }
 
-async function probePublicIp(timeoutMs) {
-  const ipify = await fetchJson('https://api.ipify.org?format=json', timeoutMs);
+async function probePublicIp(timeoutMs, agent) {
+  const ipify = await fetchJson('https://api.ipify.org?format=json', timeoutMs, agent);
   return ipify && typeof ipify.ip === 'string' ? ipify.ip : null;
 }
 
-async function probeGeo(timeoutMs) {
-  const ipapi = await fetchJson('https://ipapi.co/json/', timeoutMs);
+async function probeGeo(timeoutMs, agent) {
+  const ipapi = await fetchJson('https://ipapi.co/json/', timeoutMs, agent);
   return {
     ip: typeof ipapi.ip === 'string' ? ipapi.ip : null,
     country: typeof ipapi.country === 'string' ? ipapi.country : null,
@@ -49,4 +49,3 @@ async function probeGeo(timeoutMs) {
 }
 
 module.exports = { probePublicIp, probeGeo };
-

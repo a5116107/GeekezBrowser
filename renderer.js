@@ -1840,33 +1840,73 @@ function closeExportSelectModal() {
 
 function renderExportProfileList(profiles) {
     const container = document.getElementById('exportProfileList');
+    if (!container) return;
+    container.textContent = '';
     if (!profiles || profiles.length === 0) {
-        container.innerHTML = `<div style="padding: 30px; text-align: center; color: var(--text-secondary);">
-            <div style="font-size: 24px; margin-bottom: 8px;">📭</div>
-            <div>${t('expNoProfiles')}</div>
-        </div>`;
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'padding: 30px; text-align: center; color: var(--text-secondary);';
+
+        const icon = document.createElement('div');
+        icon.style.cssText = 'font-size: 24px; margin-bottom: 8px;';
+        icon.textContent = '📭';
+
+        const text = document.createElement('div');
+        text.textContent = t('expNoProfiles');
+
+        wrap.append(icon, text);
+        container.append(wrap);
         return;
     }
 
-    let html = '';
+    const frag = document.createDocumentFragment();
     for (const p of profiles) {
-        const tagsHtml = (p.tags || []).map(tag =>
-            `<span style="font-size: 9px; padding: 2px 6px; background: ${stringToColor(tag)}22; color: ${stringToColor(tag)}; border-radius: 4px; margin-left: 6px; font-weight: 500;">${escapeHtml(tag)}</span>`
-        ).join('');
+        const id = p && p.id ? String(p.id) : '';
+        const name = p && p.name ? String(p.name) : '';
+        const tags = Array.isArray(p && p.tags) ? p.tags : [];
 
-        html += `<label style="display: flex; align-items: center; padding: 10px 12px; margin: 4px 0; background: rgba(255,255,255,0.03); border: 1px solid transparent; border-radius: 8px; cursor: pointer; transition: all 0.15s ease;" 
-            onmouseover="this.style.background='rgba(0,255,255,0.05)'; this.style.borderColor='var(--accent)';" 
-            onmouseout="this.style.background='rgba(255,255,255,0.03)'; this.style.borderColor='transparent';">
-            <input type="checkbox" id="export-${p.id}" checked 
-                onchange="handleExportCheckboxChange('${p.id}', this.checked)"
-                style="width: 18px; height: 18px; margin-right: 12px; cursor: pointer; accent-color: var(--accent); flex-shrink: 0;">
-            <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.name || t('expNoProfiles'))}</div>
-            </div>
-            <div style="display: flex; align-items: center; flex-shrink: 0;">${tagsHtml}</div>
-        </label>`;
+        const label = document.createElement('label');
+        label.style.cssText = "display: flex; align-items: center; padding: 10px 12px; margin: 4px 0; background: rgba(255,255,255,0.03); border: 1px solid transparent; border-radius: 8px; cursor: pointer; transition: all 0.15s ease;";
+        label.addEventListener('mouseenter', () => {
+            label.style.background = 'rgba(0,255,255,0.05)';
+            label.style.borderColor = 'var(--accent)';
+        });
+        label.addEventListener('mouseleave', () => {
+            label.style.background = 'rgba(255,255,255,0.03)';
+            label.style.borderColor = 'transparent';
+        });
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = `export-${id}`;
+        input.checked = true;
+        input.style.cssText = 'width: 18px; height: 18px; margin-right: 12px; cursor: pointer; accent-color: var(--accent); flex-shrink: 0;';
+        input.addEventListener('change', () => {
+            handleExportCheckboxChange(id, input.checked);
+        });
+
+        const nameWrap = document.createElement('div');
+        nameWrap.style.cssText = 'flex: 1; min-width: 0;';
+
+        const nameEl = document.createElement('div');
+        nameEl.style.cssText = 'font-size: 13px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+        nameEl.textContent = name || t('expNoProfiles');
+        nameWrap.append(nameEl);
+
+        const tagsWrap = document.createElement('div');
+        tagsWrap.style.cssText = 'display: flex; align-items: center; flex-shrink: 0;';
+        for (const tagRaw of tags) {
+            const tag = String(tagRaw);
+            const c = stringToColor(tag);
+            const span = document.createElement('span');
+            span.style.cssText = `font-size: 9px; padding: 2px 6px; background: ${c}22; color: ${c}; border-radius: 4px; margin-left: 6px; font-weight: 500;`;
+            span.textContent = tag;
+            tagsWrap.append(span);
+        }
+
+        label.append(input, nameWrap, tagsWrap);
+        frag.append(label);
     }
-    container.innerHTML = html;
+    container.append(frag);
 }
 
 // 处理单个 checkbox 变化

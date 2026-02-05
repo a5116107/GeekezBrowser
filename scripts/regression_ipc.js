@@ -37,7 +37,11 @@ async function main() {
     // ss base64 (method:pass@host:port)
     'ss://' + Buffer.from('aes-256-gcm:pass@1.2.3.4:8388').toString('base64'),
     // vmess base64 json
-    'vmess://' + Buffer.from(JSON.stringify({ v: '2', ps: 'x', add: 'example.com', port: '443', id: '11111111-1111-1111-1111-111111111111', aid: '0', scy: 'auto', net: 'ws', host: 'example.com', path: '/', tls: 'tls', sni: 'example.com' })).toString('base64')
+    'vmess://' + Buffer.from(JSON.stringify({ v: '2', ps: 'x', add: 'example.com', port: '443', id: '11111111-1111-1111-1111-111111111111', aid: '0', scy: 'auto', net: 'ws', host: 'example.com', path: '/', tls: 'tls', sni: 'example.com' })).toString('base64'),
+    // hysteria2 minimal (with optional params)
+    'hysteria2://pass@example.com:443?sni=example.com&insecure=1&alpn=h3&obfs=salamander&obfs-password=obf&upmbps=50&downmbps=100#hy2',
+    // tuic minimal
+    'tuic://11111111-1111-1111-1111-111111111111:pass@example.com:443?sni=example.com&insecure=1&alpn=h3#tuic'
   ];
 
   const BIN_DIR = path.join(root, 'resources', 'bin', 'win32-x64');

@@ -727,105 +727,105 @@ ipcMain.handle('test-proxy-latency', async (e, proxyStr) => {
 });
 
 ipcMain.handle('test-proxy-node', async (e, proxyStr) => {
-    const tempPort = await getPort();
-    const tempConfigPath = path.join(app.getPath('userData'), `test_config_${tempPort}.json`);
-    const startedAt = Date.now();
-    let xrayProcess = null;
-
-    try {
-        let outbound;
-        try { const { parseProxyLink } = require('./utils'); outbound = parseProxyLink(proxyStr, "proxy_test"); }
-        catch (err) { return { success: false, ok: false, error: "Format Err", code: "PROXY_TEST_FORMAT_ERR" }; }
-
-        const config = { log: { loglevel: "none" }, inbounds: [{ port: tempPort, listen: "127.0.0.1", protocol: "socks", settings: { udp: true } }], outbounds: [outbound, { protocol: "freedom", tag: "direct" }], routing: { rules: [{ type: "field", outboundTag: "proxy_test", port: "0-65535" }] } };
-        await fs.writeJson(tempConfigPath, config);
-        xrayProcess = spawn(BIN_PATH, ['-c', tempConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: 'ignore', windowsHide: true });
-        await new Promise(r => setTimeout(r, 800));
-
-        const agent = new SocksProxyAgent(`socks5://127.0.0.1:${tempPort}`);
-
-        const latencyStart = Date.now();
-        const connectivity = await new Promise((resolve) => {
-            const req = http.get('http://cp.cloudflare.com/generate_204', { agent, timeout: 7000 }, (res) => {
-                const latencyMs = Date.now() - latencyStart;
-                if (res.statusCode === 204) resolve({ ok: true, latencyMs });
-                else resolve({ ok: false, latencyMs, error: `HTTP ${res.statusCode}` });
-            });
-            req.on('error', (err) => resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: err.message }));
-            req.on('timeout', () => { req.destroy(); resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: "Timeout" }); });
-        });
-
-        const { probePublicIp, probeGeo } = require('./proxy/test');
-        let publicIp = null;
-        let geo = null;
-        try { publicIp = await probePublicIp(8000); } catch (e) { }
-        try { geo = await probeGeo(8000); } catch (e) { }
-
-        const ip = (geo && geo.ip) ? geo.ip : publicIp;
-        const geoOut = geo ? {
-            country: geo.country, region: geo.region, city: geo.city,
-            asn: geo.asn, isp: geo.isp, timezone: geo.timezone,
-            latitude: geo.latitude, longitude: geo.longitude,
-        } : null;
-
-        const ok = Boolean(connectivity.ok);
-        return { success: ok, ok, startedAt, durationMs: Date.now() - startedAt, connectivity, ip, geo: geoOut };
-    } catch (err) {
-        return { success: false, ok: false, startedAt, durationMs: Date.now() - startedAt, error: err.message, code: "PROXY_TEST_INTERNAL_ERROR" };
-    } finally {
-        try { if (xrayProcess && xrayProcess.pid) await forceKill(xrayProcess.pid); } catch (e) { }
-        try { if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath); } catch (e) { }
-    }
+    return await testProxyNodeInternal(proxyStr, 'auto');
 });
 
-async function testProxyNodeInternal(proxyStr) {
+function inferProxyTestEngine(proxyStr) {
+    const s = String(proxyStr || '').trim().toLowerCase();
+    if (s.startsWith('hysteria2://') || s.startsWith('hy2://') || s.startsWith('tuic://')) return 'sing-box';
+    return 'xray';
+}
+
+async function startProxyProcessForTest({ engine, proxyStr, localPort, configPath }) {
+    if (engine === 'xray') {
+        const { parseProxyLink } = require('./utils');
+        const outbound = parseProxyLink(proxyStr, "proxy_test");
+        const config = {
+            log: { loglevel: "none" },
+            inbounds: [{ port: localPort, listen: "127.0.0.1", protocol: "socks", settings: { udp: true } }],
+            outbounds: [outbound, { protocol: "freedom", tag: "direct" }],
+            routing: { rules: [{ type: "field", outboundTag: "proxy_test", port: "0-65535" }] }
+        };
+        await fs.writeJson(configPath, config);
+        const xrayProcess = spawn(BIN_PATH, ['-c', configPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: 'ignore', windowsHide: true });
+        return { engine: 'xray', process: xrayProcess };
+    }
+
+    if (engine === 'sing-box') {
+        if (!fs.existsSync(SINGBOX_PATH)) {
+            const err = new Error('sing-box binary not found');
+            err.code = 'SINGBOX_BINARY_MISSING';
+            throw err;
+        }
+        const spec = normalizeProxySpec(proxyStr);
+        const sbConfig = buildSingboxConfigFromProxySpec(spec, localPort);
+        await fs.writeJson(configPath, sbConfig);
+        const sbProcess = spawn(SINGBOX_PATH, ['run', '-c', configPath], { cwd: BIN_DIR, env: { ...process.env }, stdio: 'ignore', windowsHide: true });
+        return { engine: 'sing-box', process: sbProcess };
+    }
+
+    throw new Error(`Unsupported test engine: ${engine}`);
+}
+
+async function testProxyNodeInternal(proxyStr, engineHint = 'auto') {
     const tempPort = await getPort();
     const tempConfigPath = path.join(app.getPath('userData'), `test_config_${tempPort}.json`);
     const startedAt = Date.now();
-    let xrayProcess = null;
+    let proxyProcess = null;
+    let lastErr = null;
+    const primary = engineHint && engineHint !== 'auto' ? engineHint : inferProxyTestEngine(proxyStr);
+    const engines = primary === 'sing-box' ? ['sing-box', 'xray'] : ['xray', 'sing-box'];
 
     try {
-        let outbound;
-        try { const { parseProxyLink } = require('./utils'); outbound = parseProxyLink(proxyStr, "proxy_test"); }
-        catch (err) { return { success: false, ok: false, error: "Format Err", code: "PROXY_TEST_FORMAT_ERR" }; }
+        for (const engine of engines) {
+            try {
+                const started = await startProxyProcessForTest({ engine, proxyStr, localPort: tempPort, configPath: tempConfigPath });
+                proxyProcess = started && started.process ? started.process : null;
+                const resolvedEngine = started && started.engine ? started.engine : engine;
 
-        const config = { log: { loglevel: "none" }, inbounds: [{ port: tempPort, listen: "127.0.0.1", protocol: "socks", settings: { udp: true } }], outbounds: [outbound, { protocol: "freedom", tag: "direct" }], routing: { rules: [{ type: "field", outboundTag: "proxy_test", port: "0-65535" }] } };
-        await fs.writeJson(tempConfigPath, config);
-        xrayProcess = spawn(BIN_PATH, ['-c', tempConfigPath], { cwd: BIN_DIR, env: { ...process.env, 'XRAY_LOCATION_ASSET': RESOURCES_BIN }, stdio: 'ignore', windowsHide: true });
-        await new Promise(r => setTimeout(r, 800));
+                await new Promise(r => setTimeout(r, 800));
 
-        const agent = new SocksProxyAgent(`socks5://127.0.0.1:${tempPort}`);
+                const agent = new SocksProxyAgent(`socks5://127.0.0.1:${tempPort}`);
 
-        const latencyStart = Date.now();
-        const connectivity = await new Promise((resolve) => {
-            const req = http.get('http://cp.cloudflare.com/generate_204', { agent, timeout: 7000 }, (res) => {
-                const latencyMs = Date.now() - latencyStart;
-                if (res.statusCode === 204) resolve({ ok: true, latencyMs });
-                else resolve({ ok: false, latencyMs, error: `HTTP ${res.statusCode}` });
-            });
-            req.on('error', (err) => resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: err.message }));
-            req.on('timeout', () => { req.destroy(); resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: "Timeout" }); });
-        });
+                const latencyStart = Date.now();
+                const connectivity = await new Promise((resolve) => {
+                    const req = http.get('http://cp.cloudflare.com/generate_204', { agent, timeout: 7000 }, (res) => {
+                        const latencyMs = Date.now() - latencyStart;
+                        if (res.statusCode === 204) resolve({ ok: true, latencyMs });
+                        else resolve({ ok: false, latencyMs, error: `HTTP ${res.statusCode}` });
+                    });
+                    req.on('error', (err) => resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: err.message }));
+                    req.on('timeout', () => { req.destroy(); resolve({ ok: false, latencyMs: Date.now() - latencyStart, error: "Timeout" }); });
+                });
 
-        const { probePublicIp, probeGeo } = require('./proxy/test');
-        let publicIp = null;
-        let geo = null;
-        try { publicIp = await probePublicIp(8000); } catch (e) { }
-        try { geo = await probeGeo(8000); } catch (e) { }
+                const { probePublicIp, probeGeo } = require('./proxy/test');
+                let publicIp = null;
+                let geo = null;
+                try { publicIp = await probePublicIp(8000, agent); } catch (e) { }
+                try { geo = await probeGeo(8000, agent); } catch (e) { }
 
-        const ip = (geo && geo.ip) ? geo.ip : publicIp;
-        const geoOut = geo ? {
-            country: geo.country, region: geo.region, city: geo.city,
-            asn: geo.asn, isp: geo.isp, timezone: geo.timezone,
-            latitude: geo.latitude, longitude: geo.longitude,
-        } : null;
+                const ip = (geo && geo.ip) ? geo.ip : publicIp;
+                const geoOut = geo ? {
+                    country: geo.country, region: geo.region, city: geo.city,
+                    asn: geo.asn, isp: geo.isp, timezone: geo.timezone,
+                    latitude: geo.latitude, longitude: geo.longitude,
+                } : null;
 
-        const ok = Boolean(connectivity.ok);
-        return { success: ok, ok, startedAt, durationMs: Date.now() - startedAt, connectivity, ip, geo: geoOut };
-    } catch (err) {
-        return { success: false, ok: false, startedAt, durationMs: Date.now() - startedAt, error: err.message, code: "PROXY_TEST_INTERNAL_ERROR" };
+                const ok = Boolean(connectivity.ok);
+                return { success: ok, ok, engine: resolvedEngine, startedAt, durationMs: Date.now() - startedAt, connectivity, ip, geo: geoOut };
+            } catch (err) {
+                lastErr = err;
+            } finally {
+                try { if (proxyProcess && proxyProcess.pid) await forceKill(proxyProcess.pid); } catch (e) { }
+                proxyProcess = null;
+                try { if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath); } catch (e) { }
+            }
+        }
+
+        const msg = lastErr && lastErr.message ? lastErr.message : "Format Err";
+        const code = lastErr && lastErr.code ? String(lastErr.code) : "PROXY_TEST_FORMAT_ERR";
+        return { success: false, ok: false, startedAt, durationMs: Date.now() - startedAt, error: msg, code };
     } finally {
-        try { if (xrayProcess && xrayProcess.pid) await forceKill(xrayProcess.pid); } catch (e) { }
         try { if (fs.existsSync(tempConfigPath)) fs.unlinkSync(tempConfigPath); } catch (e) { }
     }
 }

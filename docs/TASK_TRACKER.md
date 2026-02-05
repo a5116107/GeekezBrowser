@@ -645,3 +645,81 @@
 - acceptance:
   - 文档包含 header 名称 `X-GeekEZ-API-Token`
   - 给出 curl 示例
+
+### SEC-8：Updater 下载校验 + Zip-Slip 防护（Xray 更新）
+- id: `SEC-8`
+- status: `DONE`
+- owner: `Codex`
+- scope: `download-xray-update` 下载仅允许 `https` + host allowlist + 重定向/大小/超时限制；zip 文件头校验 + sha256；解压采用逐 entry 解包并做 Zip-Slip 防护（禁止绝对路径/盘符/`..` 穿越），限制 entry 数/解包总大小；解压后对 xray 二进制做 size + magic sanity check；增加回归脚本 `regression:updater`
+- acceptance:
+  - `npm run regression:all` PASS
+  - `npm run regression:updater` PASS
+  - Zip-Slip 构造（`../evil.txt`、`/abs.txt`）不会写出目标目录且会被拒绝
+  - 非 zip 文件会被拒绝（header 校验失败）
+
+### SEC-9：Export 选择器去 innerHTML 拼接 + 去 inline handlers
+- id: `SEC-9`
+- status: `DONE`
+- owner: `Codex`
+- scope: `renderExportProfileList` 改为 DOM `createElement` + `addEventListener`，移除 `onmouseover/onmouseout/onchange` 与拼接 HTML，使用 `textContent` 渲染 name/tags，降低 XSS/属性注入风险
+- acceptance:
+  - 手动验证：打开导出选择器，默认全选/单选/全选切换与计数正常
+  - `npm run regression:all` PASS
+
+### SEC-10：Profile 列表去 innerHTML 拼接 + 事件委托（loadProfiles）
+- id: `SEC-10`
+- status: `DOING`
+- owner: `Codex`
+- scope: `loadProfiles` 改为 DOM `createElement` 渲染（profile 卡片不再拼接 `innerHTML`）；移除 `onclick/onchange` inline handlers，改用 `data-action` + 列表容器事件委托；保证按钮（launch/restart/edit/open log/rotated/clear logs/leakcheck/delete）与 quick-switch 下拉行为不回归；Leak/Err tag 点击逻辑保持
+- acceptance:
+  - 手动验证：Profile 列表所有按钮可用，quick-switch 选择后会更新 preProxyOverride
+  - 手动验证：Leak tag（有报告时）可打开报告；Err tag 可打开日志
+  - `npm run regression:all` PASS
+
+### SEC-11：Proxy Manager 列表去 innerHTML 拼接 + DOM 事件绑定（renderProxyNodes）
+- id: `SEC-11`
+- status: `DOING`
+- owner: `Codex`
+- scope: `renderProxyNodes` 的节点行改为 DOM `createElement` 渲染（不再拼接 `div.innerHTML` / inline `onclick/onchange`）；测试按钮用 `data-proxy-action/data-proxy-id` 标注并更新 `testSingleProxy/testCurrentGroup` 的按钮定位逻辑；保留 single/balance/failover 选择行为与样式
+- acceptance:
+  - 手动验证：Proxy Manager 列表的 radio/checkbox 切换、Test/Edit/Delete 按钮行为正常，Test 时按钮会显示 `...`
+  - `npm run regression:all` PASS
+
+### SEC-12：City/Language/Timezone 下拉去 innerHTML 拼接（populateDropdown）
+- id: `SEC-12`
+- status: `DOING`
+- owner: `Codex`
+- scope: `initCustomCityDropdown` / `initCustomLanguageDropdown` / `initCustomTimezoneDropdown` 的 `populateDropdown` 改为 DOM `createElement` 渲染（不再用 `dropdown.innerHTML = ...`），避免属性注入与潜在 XSS；保持键盘上下选择/回车选择/点击选择行为一致
+- acceptance:
+  - 手动验证：新增/编辑 Profile 的 City/Language/Timezone 下拉可正常筛选与选择（键盘/鼠标都可）
+  - `npm run regression:all` PASS
+
+---
+
+## P0-Proxy：代理节点类型扩展（订阅/内核/测试）
+
+### P0-Proxy-6：订阅解析支持更多节点类型（Clash YAML / sing-box JSON）
+- id: `P0-Proxy-6`
+- status: `DONE`
+- owner: `Codex`
+- scope: 扩展 `parse-subscription`：Clash YAML 与 sing-box JSON 支持 `ss/vmess/vless/hysteria2/tuic`（以及 trojan/ws/grpc 参数映射）；确保输出仍是可用的 share link（`raw`）并保持稳定 nodeId
+- acceptance:
+  - `node scripts/e2e_subscription_parser.js` PASS
+  - `npm run regression:all` PASS
+
+### P0-Proxy-7：sing-box 支持 hysteria2 / tuic share link
+- id: `P0-Proxy-7`
+- status: `DONE`
+- owner: `Codex`
+- scope: `ProxySpec -> sing-box config` 增加 `hysteria2://` / `tuic://` 的最小映射（含 sni/insecure/alpn/obfs/up/down 常用参数）
+- acceptance:
+  - `npm run regression:ipc` PASS（包含 `sing-box check`）
+  - `npm run regression:all` PASS
+
+### P0-Proxy-8：Proxy Test 自动回退到 sing-box + IP/Geo 走本地 Socks
+- id: `P0-Proxy-8`
+- status: `DONE`
+- owner: `Codex`
+- scope: `test-proxy-node` / `testProxyNodeInternal`：优先 xray，失败时回退 sing-box；并让 `ipify/ipapi` 探测通过本地 socks 代理，确保 geo/timezone 联动依据真实出口
+- acceptance:
+  - `npm run regression:all` PASS

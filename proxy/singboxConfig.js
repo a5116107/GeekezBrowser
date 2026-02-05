@@ -5,10 +5,27 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function safeDecodeUrlComponent(value) {
+  if (!isNonEmptyString(value)) return '';
+  try {
+    return decodeURIComponent(value);
+  } catch (e) {
+    return value;
+  }
+}
+
+function parseBooleanLoose(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (!v) return null;
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'n' || v === 'off') return false;
+  return null;
+}
+
 function parseHttpOrSocksUrl(raw) {
   const u = new URL(raw);
-  const username = u.username || '';
-  const password = u.password || '';
+  const username = safeDecodeUrlComponent(u.username || '');
+  const password = safeDecodeUrlComponent(u.password || '');
   return {
     server: u.hostname,
     server_port: u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : u.protocol === 'http:' ? 80 : 1080),
@@ -80,7 +97,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       tag: 'proxy',
       server: u.hostname,
       server_port: u.port ? Number(u.port) : 443,
-      uuid: u.username,
+      uuid: safeDecodeUrlComponent(u.username),
       flow: params.get('flow') || undefined,
       packet_encoding: undefined,
       tls: undefined,
@@ -145,7 +162,7 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
       tag: 'proxy',
       server: u.hostname,
       server_port: u.port ? Number(u.port) : 443,
-      password: u.username,
+      password: safeDecodeUrlComponent(u.username),
       tls: {
         enabled: security !== 'none',
         server_name: params.get('sni') || params.get('host') || u.hostname,
@@ -165,6 +182,92 @@ function buildSingboxConfigFromProxySpec(spec, localSocksPort) {
         type: 'grpc',
         service_name: params.get('serviceName') || '',
       };
+    }
+
+    config.outbounds.push(outbound);
+    return config;
+  }
+
+  if (raw.startsWith('hysteria2://') || raw.startsWith('hy2://')) {
+    const u = new URL(raw);
+    const params = u.searchParams;
+    const password = safeDecodeUrlComponent(u.username) || String(params.get('password') || '').trim();
+    if (!password) throw Object.assign(new Error('Invalid hysteria2 password'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+
+    const sni = params.get('sni') || u.hostname;
+    const insecureParam = parseBooleanLoose(params.get('insecure'));
+    const insecure = insecureParam === null ? true : insecureParam;
+
+    const outbound = {
+      type: 'hysteria2',
+      tag: 'proxy',
+      server: u.hostname,
+      server_port: u.port ? Number(u.port) : 443,
+      password,
+      up_mbps: undefined,
+      down_mbps: undefined,
+      obfs: undefined,
+      tls: {
+        enabled: true,
+        server_name: sni,
+        insecure,
+      },
+    };
+
+    const up = Number(params.get('upmbps'));
+    const down = Number(params.get('downmbps'));
+    if (Number.isFinite(up) && up > 0) outbound.up_mbps = up;
+    if (Number.isFinite(down) && down > 0) outbound.down_mbps = down;
+
+    const alpnRaw = params.get('alpn');
+    if (alpnRaw) {
+      const alpn = String(alpnRaw).split(',').map(s => s.trim()).filter(Boolean);
+      if (alpn.length > 0) outbound.tls.alpn = alpn;
+    }
+
+    const obfsType = params.get('obfs');
+    if (obfsType) {
+      outbound.obfs = {
+        type: String(obfsType),
+        password: params.get('obfs-password') || params.get('obfsPassword') || '',
+      };
+    }
+
+    config.outbounds.push(outbound);
+    return config;
+  }
+
+  if (raw.startsWith('tuic://')) {
+    const u = new URL(raw);
+    const params = u.searchParams;
+    const uuid = safeDecodeUrlComponent(u.username);
+    const password = safeDecodeUrlComponent(u.password) || String(params.get('password') || '').trim();
+    if (!uuid || !password) throw Object.assign(new Error('Invalid tuic credentials'), { code: 'SINGBOX_UNSUPPORTED_PROTOCOL' });
+
+    const sni = params.get('sni') || u.hostname;
+    const insecureParam = parseBooleanLoose(params.get('insecure'));
+    const insecure = insecureParam === null ? true : insecureParam;
+
+    const outbound = {
+      type: 'tuic',
+      tag: 'proxy',
+      server: u.hostname,
+      server_port: u.port ? Number(u.port) : 443,
+      uuid,
+      password,
+      congestion_control: params.get('congestion_control') || params.get('congestion-control') || undefined,
+      udp_relay_mode: params.get('udp_relay_mode') || params.get('udp-relay-mode') || undefined,
+      tls: {
+        enabled: true,
+        server_name: sni,
+        insecure,
+      },
+    };
+
+    const alpnRaw = params.get('alpn');
+    if (alpnRaw) {
+      const alpn = String(alpnRaw).split(',').map(s => s.trim()).filter(Boolean);
+      if (alpn.length > 0) outbound.tls.alpn = alpn;
     }
 
     config.outbounds.push(outbound);
