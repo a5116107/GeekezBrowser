@@ -95,6 +95,111 @@ function normalizeProfileId(input) {
     return id;
 }
 
+function normalizeProxyBindId(input) {
+    if (input == null) return '';
+    const raw = typeof input === 'string' ? input : String(input);
+    const id = raw.trim();
+    if (!id) return '';
+    // Node ids are UUIDs or timestamp-based strings; keep permissive but bounded.
+    if (id.length > 200) return '';
+    if (/[\r\n\t]/.test(id)) return '';
+    return id;
+}
+
+function normalizePreProxyOverrideToken(input) {
+    const token = String(input || '').trim().toLowerCase();
+    if (token === 'on' || token === 'off' || token === 'default') return token;
+    return 'default';
+}
+
+function findProxyNodeById(settings, bindId) {
+    const id = normalizeProxyBindId(bindId);
+    if (!id) return null;
+    const list = settings && Array.isArray(settings.preProxies) ? settings.preProxies : [];
+    return list.find((n) => n && String(n.id) === id) || null;
+}
+
+function assertProxyBindUniqueOrThrow(profiles, bindId, { exceptProfileId = '' } = {}) {
+    const id = normalizeProxyBindId(bindId);
+    if (!id) return;
+    const except = exceptProfileId ? String(exceptProfileId) : '';
+    const conflict = (profiles || []).find((p) => {
+        if (!p || typeof p !== 'object') return false;
+        const pid = p.id ? String(p.id) : '';
+        if (except && pid === except) return false;
+        const other = normalizeProxyBindId(p.proxyBindId);
+        return other && other === id;
+    });
+    if (conflict) {
+        const err = new Error(`Proxy node is already bound: ${conflict.name || conflict.id || 'unknown'}`);
+        err.code = 'PROXY_BIND_IN_USE';
+        err.details = {
+            bindId: id,
+            conflictProfileId: conflict.id || null,
+            conflictProfileName: conflict.name || null,
+        };
+        throw err;
+    }
+}
+
+function assertProxyBindNodeExistsOrThrow(settings, bindId) {
+    const id = normalizeProxyBindId(bindId);
+    if (!id) return null;
+    const node = findProxyNodeById(settings, id);
+    if (!node || !node.url) {
+        const err = new Error(`Bound proxy node not found: ${id}`);
+        err.code = 'PROXY_BIND_NODE_NOT_FOUND';
+        err.details = { bindId: id };
+        throw err;
+    }
+    return node;
+}
+
+function validateProxyBindIntegrityOrThrow(profiles, settings, { contextLabel = '' } = {}) {
+    const firstByBind = new Map();
+    const conflicts = [];
+    const missing = [];
+
+    (profiles || []).forEach((p) => {
+        if (!p || typeof p !== 'object') return;
+        const profileId = p.id ? String(p.id) : '';
+        const name = p.name ? String(p.name) : '';
+        const bindId = normalizeProxyBindId(p.proxyBindId);
+        if (!bindId) return;
+
+        const existing = firstByBind.get(bindId);
+        if (existing && existing.profileId && existing.profileId !== profileId) {
+            conflicts.push({
+                bindId,
+                profiles: [
+                    { id: existing.profileId, name: existing.name || '' },
+                    { id: profileId, name },
+                ],
+            });
+        } else if (!existing) {
+            firstByBind.set(bindId, { profileId, name });
+        }
+
+        const node = findProxyNodeById(settings, bindId);
+        if (!node || !node.url) {
+            missing.push({ bindId, profileId, name });
+        }
+    });
+
+    if (conflicts.length > 0) {
+        const err = new Error(`Proxy binding conflict${contextLabel ? ` (${contextLabel})` : ''}: ${conflicts.length} duplicate bind(s)`);
+        err.code = 'PROXY_BIND_IN_USE';
+        err.details = { conflicts, missing };
+        throw err;
+    }
+    if (missing.length > 0) {
+        const err = new Error(`Bound proxy node missing${contextLabel ? ` (${contextLabel})` : ''}: ${missing.length} bind(s)`);
+        err.code = 'PROXY_BIND_NODE_NOT_FOUND';
+        err.details = { missing };
+        throw err;
+    }
+}
+
 function resolveProfileDirOrThrow(profileId) {
     const id = normalizeProfileId(profileId);
     if (!id) throw new Error('Invalid profile id');
@@ -1681,6 +1786,67 @@ ipcMain.handle('test-proxy-node', async (e, input, legacyOptions) => {
     return await testProxyNodeInternal(input, 'auto', legacyOptions && typeof legacyOptions === 'object' ? legacyOptions : {});
 });
 
+// Test a profile's effective proxy (bindId resolved + pre-proxy override applied) and persist diagnostics.
+ipcMain.handle('test-profile-proxy', async (e, input) => {
+    const payload = (input && typeof input === 'object' && !Array.isArray(input)) ? input : { profileId: input };
+    const profileId = payload.profileId || payload.id || '';
+    const resolvedProfile = resolveProfileDirOrThrow(profileId);
+
+    const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+    const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
+    const profile = profiles.find(p => p && p.id === resolvedProfile.id);
+    if (!profile) {
+        const err = new Error('Profile not found');
+        err.code = 'PROFILE_NOT_FOUND';
+        throw err;
+    }
+
+    const beforeProxyStr = profile.proxyStr || '';
+    const bindId = normalizeProxyBindId(profile.proxyBindId);
+    if (bindId) {
+        const node = assertProxyBindNodeExistsOrThrow(settings, bindId);
+        if (node && node.url) profile.proxyStr = String(node.url);
+    }
+    if (!profile.proxyStr || !String(profile.proxyStr).trim()) {
+        const err = new Error('Profile proxy is empty');
+        err.code = 'PROFILE_PROXY_EMPTY';
+        throw err;
+    }
+
+    const engineHint = payload.engineHint || 'auto';
+    const rawOptions = (payload.options && typeof payload.options === 'object') ? payload.options : {};
+    const preProxyOverride = normalizePreProxyOverrideToken(profile.preProxyOverride || 'default');
+    const options = { ...rawOptions, preProxyOverride };
+    if (!options.profile) options.profile = 'standard';
+
+    const result = await testProxyNodeInternal(profile.proxyStr, engineHint, options);
+
+    try {
+        profile.diagnostics = profile.diagnostics || {};
+        profile.diagnostics.lastProxyCheck = {
+            checkedAt: Date.now(),
+            ok: Boolean(result && result.ok),
+            engine: result && (result.engine || result.primaryEngine) ? String(result.engine || result.primaryEngine) : '',
+            protocol: result && result.protocol ? String(result.protocol) : '',
+            latencyMs: result && result.connectivity && typeof result.connectivity.latencyMs === 'number' ? result.connectivity.latencyMs : null,
+            ip: result && result.ip ? String(result.ip) : (result && result.geo && result.geo.ip ? String(result.geo.ip) : ''),
+            geo: result && result.geo ? result.geo : null,
+            finalCode: result && (result.finalCode || result.code) ? String(result.finalCode || result.code) : '',
+            finalMessage: result && (result.finalMessage || result.error) ? String(result.finalMessage || result.error) : '',
+            preProxy: result && result.testOptions && result.testOptions.preProxy ? result.testOptions.preProxy : null,
+            traceId: result && result.traceId ? String(result.traceId) : '',
+        };
+
+        // Persist any proxyStr refresh from binding + diagnostics.
+        if (beforeProxyStr !== profile.proxyStr) {
+            // keep updated proxyStr in storage so UI stays in sync
+        }
+        await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 });
+    } catch (e) { }
+
+    return result;
+});
+
 const DEBUG_PROXY_TEST = (process.env.GEEKEZ_DEBUG_PROXY_TEST === '1') || (isDev && process.env.GEEKEZ_DEBUG_PROXY_TEST !== '0');
 const DEBUG_PROXY_TEST_KEEP_CONFIG = (process.env.GEEKEZ_DEBUG_PROXY_TEST_KEEP_CONFIG === '1');
 
@@ -2112,6 +2278,7 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto', testOptions 
     const tempConfigPath = path.join(app.getPath('userData'), `test_config_${tempPort}.json`);
     const startedAt = Date.now();
     const runtimeOptions = normalizeProxyTestRuntimeOptions(testOptions);
+    const preProxyOverrideToken = normalizePreProxyOverrideToken(testOptions && testOptions.preProxyOverride);
     let proxyProcess = null;
     let lastErr = null;
     const normalizedProxyStr = normalizeProxyInputRaw(proxyStr);
@@ -2127,16 +2294,19 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto', testOptions 
         traceId,
     });
     baseResult.testProfile = runtimeOptions.profile;
-    baseResult.testOptions = { ...runtimeOptions };
+    baseResult.testOptions = { ...runtimeOptions, preProxyOverride: preProxyOverrideToken };
     let stablePreProxySelection = null;
     try {
-        const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
-        stablePreProxySelection = resolveStablePreProxyForTest(settings, { targetProxyStr: normalizedProxyStr });
+        const settingsRaw = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
+        const effectiveSettings = (settingsRaw && typeof settingsRaw === 'object') ? { ...settingsRaw } : {};
+        if (preProxyOverrideToken === 'on') effectiveSettings.enablePreProxy = true;
+        if (preProxyOverrideToken === 'off') effectiveSettings.enablePreProxy = false;
+        stablePreProxySelection = resolveStablePreProxyForTest(effectiveSettings, { targetProxyStr: normalizedProxyStr });
         if (stablePreProxySelection && stablePreProxySelection.meta) {
-            baseResult.testOptions = { ...runtimeOptions, preProxy: stablePreProxySelection.meta };
+            baseResult.testOptions = { ...runtimeOptions, preProxy: stablePreProxySelection.meta, preProxyOverride: preProxyOverrideToken };
         }
     } catch (e) {
-        baseResult.testOptions = { ...runtimeOptions, preProxy: { enabled: false, error: e && e.message ? String(e.message) : String(e) } };
+        baseResult.testOptions = { ...runtimeOptions, preProxy: { enabled: false, error: e && e.message ? String(e.message) : String(e) }, preProxyOverride: preProxyOverrideToken };
     }
 
     const finalizeAndReturn = (patch = {}) => {
@@ -4457,19 +4627,36 @@ ipcMain.handle('update-profile', async (event, updatedProfile) => {
         const safeId = normalizeProfileId(updatedProfile.id);
         if (!safeId) return false;
         const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+        const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
         const index = profiles.findIndex(p => p.id === safeId);
         if (index > -1) {
-            profiles[index] = { ...updatedProfile, id: safeId };
+            const bindId = normalizeProxyBindId(updatedProfile.proxyBindId);
+            let boundNode = null;
+            if (bindId) {
+                assertProxyBindUniqueOrThrow(profiles, bindId, { exceptProfileId: safeId });
+                boundNode = assertProxyBindNodeExistsOrThrow(settings, bindId);
+            }
+
+            const next = { ...updatedProfile, id: safeId };
+            if (bindId) {
+                next.proxyBindId = bindId;
+                if (boundNode && boundNode.url) next.proxyStr = String(boundNode.url);
+            } else {
+                if (next.proxyBindId) delete next.proxyBindId;
+            }
+            profiles[index] = next;
             await fs.writeJson(PROFILES_FILE, profiles);
             return true;
         }
         return false;
     } catch (e) {
+        if (e && e.code && String(e.code).startsWith('PROXY_BIND_')) throw e;
         return false;
     }
 });
 ipcMain.handle('save-profile', async (event, data) => {
     const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+    const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
     const fingerprint = data.fingerprint || generateFingerprint();
 
     // Apply timezone
@@ -4487,11 +4674,18 @@ ipcMain.handle('save-profile', async (event, data) => {
     const proxyEngine = proxyMode === 'tun' ? 'sing-box' : (data.proxyEngine || 'xray');
     const tun = (proxyMode === 'tun' && data && data.tun && typeof data.tun === 'object') ? data.tun : undefined;
 
+    const bindId = normalizeProxyBindId(data && data.proxyBindId);
+    let boundNode = null;
+    if (bindId) {
+        assertProxyBindUniqueOrThrow(profiles, bindId);
+        boundNode = assertProxyBindNodeExistsOrThrow(settings, bindId);
+    }
+
     const newProfile = {
         id: uuidv4(),
         name: data.name,
-        proxyStr: data.proxyStr,
-        proxyBindId: data.proxyBindId || undefined,
+        proxyStr: bindId && boundNode && boundNode.url ? String(boundNode.url) : data.proxyStr,
+        proxyBindId: bindId || undefined,
         proxyEngine,
         proxyMode,
         tun,
@@ -5121,10 +5315,33 @@ ipcMain.handle('import-full-backup', async (e, { password }) => {
             throw new Error(`Unsupported backup version: ${backupData.version}`);
         }
 
-        // 还原 profiles
         const currentProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+        const currentSettings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
+        const nextSettings = (currentSettings && typeof currentSettings === 'object') ? { ...currentSettings } : { preProxies: [], subscriptions: [] };
+        if (!Array.isArray(nextSettings.preProxies)) nextSettings.preProxies = [];
+        if (!Array.isArray(nextSettings.subscriptions)) nextSettings.subscriptions = [];
+
+        if (Array.isArray(backupData.preProxies)) {
+            for (const p of backupData.preProxies) {
+                if (!p || typeof p !== 'object') continue;
+                if (!nextSettings.preProxies.find(cp => cp && cp.id === p.id)) {
+                    nextSettings.preProxies.push(p);
+                }
+            }
+        }
+        if (Array.isArray(backupData.subscriptions)) {
+            for (const s of backupData.subscriptions) {
+                if (!s || typeof s !== 'object') continue;
+                if (!nextSettings.subscriptions.find(cs => cs && cs.id === s.id)) {
+                    nextSettings.subscriptions.push(s);
+                }
+            }
+        }
+
         let importedCount = 0;
         const idMap = {};
+        const importedSafeIds = new Set();
+        const incoming = [];
 
         const incomingProfiles = Array.isArray(backupData.profiles) ? backupData.profiles : [];
         for (const rawProfile of incomingProfiles) {
@@ -5134,32 +5351,82 @@ ipcMain.handle('import-full-backup', async (e, { password }) => {
             if (originalId) idMap[originalId] = safeId;
 
             const profile = { ...rawProfile, id: safeId };
-            const idx = currentProfiles.findIndex(cp => cp.id === safeId);
-            if (idx > -1) currentProfiles[idx] = profile;
-            else currentProfiles.push(profile);
+            const bindId = normalizeProxyBindId(profile.proxyBindId);
+            if (bindId) profile.proxyBindId = bindId;
+            else if (profile.proxyBindId) delete profile.proxyBindId;
+            importedSafeIds.add(safeId);
+            incoming.push(profile);
             importedCount++;
         }
-        await fs.writeJson(PROFILES_FILE, currentProfiles);
 
-        // 还原代理和订阅
-        const currentSettings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
-        if (backupData.preProxies) {
-            if (!currentSettings.preProxies) currentSettings.preProxies = [];
-            for (const p of backupData.preProxies) {
-                if (!currentSettings.preProxies.find(cp => cp.id === p.id)) {
-                    currentSettings.preProxies.push(p);
-                }
+        // Validate incoming bindings without blocking on pre-existing broken data.
+        const existingBind = new Map();
+        currentProfiles.forEach((cp) => {
+            if (!cp || typeof cp !== 'object') return;
+            const pid = cp.id ? String(cp.id) : '';
+            if (!pid || importedSafeIds.has(pid)) return;
+            const bid = normalizeProxyBindId(cp.proxyBindId);
+            if (!bid) return;
+            if (!existingBind.has(bid)) existingBind.set(bid, { profileId: pid, name: cp.name || '' });
+        });
+
+        const importedBind = new Map();
+        const conflicts = [];
+        const missing = [];
+        incoming.forEach((p) => {
+            const pid = p && p.id ? String(p.id) : '';
+            const bid = normalizeProxyBindId(p && p.proxyBindId);
+            if (!pid || !bid) return;
+
+            const prev = importedBind.get(bid);
+            if (prev && prev.profileId && prev.profileId !== pid) {
+                conflicts.push({
+                    bindId: bid,
+                    profiles: [
+                        { id: prev.profileId, name: prev.name || '' },
+                        { id: pid, name: p.name || '' },
+                    ],
+                });
+            } else if (!prev) {
+                importedBind.set(bid, { profileId: pid, name: p.name || '' });
             }
-        }
-        if (backupData.subscriptions) {
-            if (!currentSettings.subscriptions) currentSettings.subscriptions = [];
-            for (const s of backupData.subscriptions) {
-                if (!currentSettings.subscriptions.find(cs => cs.id === s.id)) {
-                    currentSettings.subscriptions.push(s);
-                }
+
+            const ex = existingBind.get(bid);
+            if (ex && ex.profileId && ex.profileId !== pid) {
+                conflicts.push({
+                    bindId: bid,
+                    profiles: [
+                        { id: ex.profileId, name: ex.name || '' },
+                        { id: pid, name: p.name || '' },
+                    ],
+                });
             }
+
+            const node = findProxyNodeById(nextSettings, bid);
+            if (!node || !node.url) missing.push({ bindId: bid, profileId: pid, name: p.name || '' });
+        });
+
+        if (conflicts.length > 0) {
+            const err = new Error(`Import failed: ${conflicts.length} proxy bind conflict(s). Unbind or delete conflicting profiles first.`);
+            err.code = 'PROXY_BIND_IN_USE';
+            err.details = { conflicts };
+            throw err;
         }
-        await fs.writeJson(SETTINGS_FILE, currentSettings);
+        if (missing.length > 0) {
+            const err = new Error(`Import failed: ${missing.length} bound node(s) missing in proxy pool. Import proxies/subscriptions first.`);
+            err.code = 'PROXY_BIND_NODE_NOT_FOUND';
+            err.details = { missing };
+            throw err;
+        }
+
+        incoming.forEach((profile) => {
+            const idx = currentProfiles.findIndex(cp => cp.id === profile.id);
+            if (idx > -1) currentProfiles[idx] = profile;
+            else currentProfiles.push(profile);
+        });
+
+        await fs.writeJson(PROFILES_FILE, currentProfiles);
+        await fs.writeJson(SETTINGS_FILE, nextSettings);
 
         // 还原浏览器数据
         // 浏览器数据存储在 DATA_PATH/<profileId>/browser_data/Default/
@@ -5214,9 +5481,9 @@ ipcMain.handle('import-full-backup', async (e, { password }) => {
     } catch (err) {
         console.error('Import full backup failed:', err);
         if (err.message.includes('Unsupported state') || err.message.includes('bad decrypt')) {
-            return { success: false, error: '密码错误或文件已损坏' };
+            return { success: false, error: '密码错误或文件已损坏', code: err.code || null };
         }
-        return { success: false, error: err.message };
+        return { success: false, error: err.message, code: err.code || null, details: err.details || null };
     }
 });
 
@@ -5234,40 +5501,135 @@ ipcMain.handle('import-data', async () => {
             let updated = false;
 
             if (data.profiles || data.preProxies || data.subscriptions) {
+                const currentProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+                const currentSettings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
+                const nextSettings = (currentSettings && typeof currentSettings === 'object') ? { ...currentSettings } : { preProxies: [], subscriptions: [] };
+                if (!Array.isArray(nextSettings.preProxies)) nextSettings.preProxies = [];
+                if (!Array.isArray(nextSettings.subscriptions)) nextSettings.subscriptions = [];
+
+                const willImportProfiles = Array.isArray(data.profiles);
+                const willImportProxies = Array.isArray(data.preProxies) || Array.isArray(data.subscriptions);
+
+                if (Array.isArray(data.preProxies)) {
+                    data.preProxies.forEach(p => {
+                        if (!p || typeof p !== 'object') return;
+                        if (!nextSettings.preProxies.find(cp => cp && cp.id === p.id)) nextSettings.preProxies.push(p);
+                    });
+                }
+                if (Array.isArray(data.subscriptions)) {
+                    data.subscriptions.forEach(s => {
+                        if (!s || typeof s !== 'object') return;
+                        if (!nextSettings.subscriptions.find(cs => cs && cs.id === s.id)) nextSettings.subscriptions.push(s);
+                    });
+                }
+
                 if (Array.isArray(data.profiles)) {
-                    const currentProfiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+                    const importedSafeIds = new Set();
+                    const incoming = [];
                     for (const rawProfile of data.profiles) {
                         if (!rawProfile || typeof rawProfile !== 'object') continue;
                         const safeId = normalizeProfileId(rawProfile.id) || uuidv4();
                         const p = { ...rawProfile, id: safeId };
-                        const idx = currentProfiles.findIndex(cp => cp.id === safeId);
+                        const bindId = normalizeProxyBindId(p.proxyBindId);
+                        if (bindId) p.proxyBindId = bindId;
+                        else if (p.proxyBindId) delete p.proxyBindId;
+                        importedSafeIds.add(safeId);
+                        incoming.push(p);
+                    }
+
+                    // Validate imported bindings without blocking on pre-existing broken data.
+                    const existingBind = new Map();
+                    currentProfiles.forEach((cp) => {
+                        if (!cp || typeof cp !== 'object') return;
+                        const pid = cp.id ? String(cp.id) : '';
+                        if (!pid || importedSafeIds.has(pid)) return; // overwritten by import
+                        const bid = normalizeProxyBindId(cp.proxyBindId);
+                        if (!bid) return;
+                        if (!existingBind.has(bid)) existingBind.set(bid, { profileId: pid, name: cp.name || '' });
+                    });
+
+                    const importedBind = new Map();
+                    const conflicts = [];
+                    const missing = [];
+                    incoming.forEach((p) => {
+                        const pid = p && p.id ? String(p.id) : '';
+                        const bid = normalizeProxyBindId(p && p.proxyBindId);
+                        if (!pid || !bid) return;
+
+                        const prev = importedBind.get(bid);
+                        if (prev && prev.profileId && prev.profileId !== pid) {
+                            conflicts.push({
+                                bindId: bid,
+                                profiles: [
+                                    { id: prev.profileId, name: prev.name || '' },
+                                    { id: pid, name: p.name || '' },
+                                ],
+                            });
+                        } else if (!prev) {
+                            importedBind.set(bid, { profileId: pid, name: p.name || '' });
+                        }
+
+                        const ex = existingBind.get(bid);
+                        if (ex && ex.profileId && ex.profileId !== pid) {
+                            conflicts.push({
+                                bindId: bid,
+                                profiles: [
+                                    { id: ex.profileId, name: ex.name || '' },
+                                    { id: pid, name: p.name || '' },
+                                ],
+                            });
+                        }
+
+                        const node = findProxyNodeById(nextSettings, bid);
+                        if (!node || !node.url) missing.push({ bindId: bid, profileId: pid, name: p.name || '' });
+                    });
+
+                    if (conflicts.length > 0) {
+                        const err = new Error(`Import failed: ${conflicts.length} proxy bind conflict(s). Unbind or delete conflicting profiles first.`);
+                        err.code = 'PROXY_BIND_IN_USE';
+                        err.details = { conflicts };
+                        throw err;
+                    }
+                    if (missing.length > 0) {
+                        const err = new Error(`Import failed: ${missing.length} bound node(s) missing in proxy pool. Import proxies/subscriptions first.`);
+                        err.code = 'PROXY_BIND_NODE_NOT_FOUND';
+                        err.details = { missing };
+                        throw err;
+                    }
+
+                    incoming.forEach((p) => {
+                        const idx = currentProfiles.findIndex(cp => cp.id === p.id);
                         if (idx > -1) currentProfiles[idx] = p;
                         else currentProfiles.push(p);
-                    }
+                    });
+                }
+
+                if (willImportProfiles) {
                     await fs.writeJson(PROFILES_FILE, currentProfiles);
                     updated = true;
                 }
-                if (Array.isArray(data.preProxies) || Array.isArray(data.subscriptions)) {
-                    const currentSettings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
-                    if (data.preProxies) {
-                        if (!currentSettings.preProxies) currentSettings.preProxies = [];
-                        data.preProxies.forEach(p => {
-                            if (!currentSettings.preProxies.find(cp => cp.id === p.id)) currentSettings.preProxies.push(p);
-                        });
-                    }
-                    if (data.subscriptions) {
-                        if (!currentSettings.subscriptions) currentSettings.subscriptions = [];
-                        data.subscriptions.forEach(s => {
-                            if (!currentSettings.subscriptions.find(cs => cs.id === s.id)) currentSettings.subscriptions.push(s);
-                        });
-                    }
-                    await fs.writeJson(SETTINGS_FILE, currentSettings);
+                if (willImportProxies) {
+                    await fs.writeJson(SETTINGS_FILE, nextSettings);
                     updated = true;
                 }
             } else if (data.name && data.proxyStr && data.fingerprint) {
                 // 单个环境导入
                 const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
-                const newProfile = { ...data, id: uuidv4(), isSetup: false, createdAt: Date.now() };
+                const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
+                const bindId = normalizeProxyBindId(data && data.proxyBindId);
+                let boundNode = null;
+                if (bindId) {
+                    assertProxyBindUniqueOrThrow(profiles, bindId);
+                    boundNode = assertProxyBindNodeExistsOrThrow(settings, bindId);
+                }
+                const newProfile = {
+                    ...data,
+                    id: uuidv4(),
+                    proxyStr: bindId && boundNode && boundNode.url ? String(boundNode.url) : data.proxyStr,
+                    proxyBindId: bindId || undefined,
+                    isSetup: false,
+                    createdAt: Date.now()
+                };
                 profiles.push(newProfile);
                 await fs.writeJson(PROFILES_FILE, profiles);
                 updated = true;
@@ -5385,6 +5747,18 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
     if (!profile.fingerprint) profile.fingerprint = generateFingerprint();
     profile.fingerprint = normalizeFingerprintSpec(profile.fingerprint);
 
+    // Resolve bound proxy node (proxyBindId -> latest node url) before any proxy-related work.
+    // This keeps subscription updates from desyncing profile.proxyStr.
+    const resolvedBindId = normalizeProxyBindId(profile.proxyBindId);
+    if (resolvedBindId) {
+        const node = assertProxyBindNodeExistsOrThrow(settings, resolvedBindId);
+        const resolvedUrl = node && node.url ? String(node.url) : '';
+        if (resolvedUrl && profile.proxyStr !== resolvedUrl) {
+            profile.proxyStr = resolvedUrl;
+            try { await fs.writeJson(PROFILES_FILE, profiles, { spaces: 2 }); } catch (e) { }
+        }
+    }
+
     // Proxy -> Fingerprint linkage (local, self-use enterprise): test current proxy and apply timezone if needed
     // Policy can be configured per profile; fallback to global settings default when absent.
     try {
@@ -5399,7 +5773,7 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
             const enforce = profileConsistency ? Boolean(profileConsistency.enforce) : true;
             const allowAutofix = (profile.proxyPolicy && profile.proxyPolicy.allowAutofix) ? profile.proxyPolicy.allowAutofix : { language: false, geo: false };
 
-            const resolved = await testProxyNodeInternal(profile.proxyStr);
+            const resolved = await testProxyNodeInternal(profile.proxyStr, 'auto', { preProxyOverride: profile.preProxyOverride || 'default' });
 
             if (resolved && resolved.geo) {
                 const link = applyProxyGeoToFingerprint(profile, resolved, { enforce, onMismatch, allowAutofix });
@@ -5490,6 +5864,19 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
             else if (settings.mode === 'failover') { const target = active[0]; finalPreProxyConfig = { preProxies: [target] }; if (settings.notify) switchMsg = `Failover: [${target.remark}]`; }
         }
     }
+
+    // Avoid chaining to itself (pre-proxy equals the main proxy).
+    try {
+        const target = finalPreProxyConfig && Array.isArray(finalPreProxyConfig.preProxies) && finalPreProxyConfig.preProxies[0]
+            ? finalPreProxyConfig.preProxies[0]
+            : null;
+        const preUrl = target && target.url ? normalizeProxyInputRaw(target.url) : '';
+        const mainUrl = profile && profile.proxyStr ? normalizeProxyInputRaw(profile.proxyStr) : '';
+        if (preUrl && mainUrl && preUrl === mainUrl) {
+            finalPreProxyConfig = null;
+            switchMsg = null;
+        }
+    } catch (e) { }
 
     try {
         const localPort = await getPort();

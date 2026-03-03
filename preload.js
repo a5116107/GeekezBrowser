@@ -32,6 +32,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'fetch-url-conditional',
     'parse-subscription',
     'test-proxy-node',
+    'test-profile-proxy',
     'export-selected-data',
     'export-proxy-test-report',
 

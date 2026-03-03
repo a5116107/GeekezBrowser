@@ -6036,6 +6036,12 @@ function getProfileErrorActionHint(code, stage = '') {
         case 'STOP_PROFILE_NOT_FOUND':
         case 'PROFILE_NOT_FOUND':
             return tText('profileErrHintProfileInvalid', 'Profile reference is invalid. Refresh profile list and retry.');
+        case 'PROFILE_PROXY_EMPTY':
+            return tText('profileErrHintProxyEmpty', 'Profile proxy is empty. Set a proxy (or bind a node) then retry.');
+        case 'PROXY_BIND_NODE_NOT_FOUND':
+            return tText('profileErrHintProxyBindMissing', 'Bound proxy node is missing. Open Proxy Manager or unbind the node, then retry.');
+        case 'PROXY_BIND_IN_USE':
+            return tText('profileErrHintProxyBindInUse', 'Proxy node is already bound to another profile. Unbind it first, then retry.');
         default:
             break;
     }
@@ -10410,6 +10416,12 @@ async function saveNewProfile() {
             createdCount++;
         } catch (e) {
             console.error(`Failed to create profile ${name}:`, e);
+            // When binding is requested, failures must be surfaced (backend may reject conflicts).
+            if (bindSelection && bindSelection.bindId) {
+                const err = formatIpcError(e);
+                showAlert((tText('profileCreateFailed', 'Create failed') || 'Create failed') + (err.code ? ` [${err.code}]` : '') + ': ' + err.message);
+                break;
+            }
         }
     }
 
@@ -10704,7 +10716,17 @@ async function saveEditProfile() {
         }
 
         console.log('[saveEditProfile] Calling updateProfile...');
-        await window.electronAPI.updateProfile(p);
+        try {
+            const ok = await window.electronAPI.updateProfile(p);
+            if (!ok) {
+                showAlert(tText('profileSaveFailed', 'Save failed. Please retry.'));
+                return;
+            }
+        } catch (e) {
+            const err = formatIpcError(e);
+            showAlert((tText('profileSaveFailed', 'Save failed') || 'Save failed') + (err.code ? ` [${err.code}]` : '') + ': ' + err.message);
+            return;
+        }
         console.log('[saveEditProfile] Profile updated successfully');
         closeEditModal(); await loadProfiles();
 
