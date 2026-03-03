@@ -24,17 +24,17 @@
                 <svg class="logo-svg" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
                     <defs>
                         <linearGradient id="neon" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" style="stop-color:#00e0ff;stop-opacity:1" />
-                            <stop offset="100%" style="stop-color:#2980b9;stop-opacity:1" />
+                            <stop offset="0%" style="stop-color:#58a6ff;stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:#1c5aa6;stop-opacity:1" />
                         </linearGradient>
                     </defs>
                     <path
                         d="M256 100 H 120 A 20 20 0 0 0 100 120 V 392 A 20 20 0 0 0 120 412 H 392 A 20 20 0 0 0 412 392 V 256 H 256 V 320 H 330 V 332 H 180 V 180 H 330 V 100"
                         fill="url(#neon)" />
-                    <rect x="360" y="80" width="60" height="40" fill="#ff0055" opacity="0.8" />
-                    <rect x="80" y="280" width="40" height="20" fill="#00e0ff" opacity="0.6" />
-                    <rect x="400" y="400" width="30" height="30" fill="#00e0ff" />
-                    <rect x="80" y="80" width="20" height="20" fill="#ff0055" />
+                    <rect x="360" y="80" width="60" height="40" fill="#f85149" opacity="0.8" />
+                    <rect x="80" y="280" width="40" height="20" fill="#58a6ff" opacity="0.6" />
+                    <rect x="400" y="400" width="30" height="30" fill="#58a6ff" />
+                    <rect x="80" y="80" width="20" height="20" fill="#f85149" />
                 </svg>
                 <div class="logo-text">eek<span class="highlight">EZ</span><span class="ver" id="app-version"></span></div>
             </div>
@@ -208,7 +208,8 @@
                         <table class="profile-table proxy-page-table">
                             <thead>
                                 <tr>
-                                    <th><input type="checkbox" class="row-checkbox" id="selectAllProxies"></th>
+                                    <th><input type="checkbox" class="row-checkbox" id="selectAllProxies" aria-label="Select all"></th>
+                                    <th data-i18n="colEnable">On</th>
                                     <th>#</th>
                                     <th data-i18n="colName">Name</th>
                                     <th>Protocol</th>
@@ -252,8 +253,10 @@
     <!-- Add Modal -->
     <div id="addModal" class="modal-overlay">
         <div class="modal-content">
-            <div class="modal-header"><span data-i18n="newProfile">New Profile</span><span style="cursor:pointer"
-                    data-action="close-add-modal">✕</span></div>
+            <div class="modal-header">
+                <span class="modal-title" data-i18n="newProfile">New Profile</span>
+                <button class="modal-close" data-action="close-add-modal" aria-label="Close">✕</button>
+            </div>
             <div class="modal-body">
                 <label data-i18n="profileName" style="font-size:11px; font-weight:bold; opacity:0.8;">Name</label>
                 <input type="text" id="addName" placeholder="Name" spellcheck="false" autocomplete="off">
@@ -383,8 +386,10 @@
     <!-- Edit Modal -->
     <div id="editModal" class="modal-overlay">
         <div class="modal-content">
-            <div class="modal-header"><span data-i18n="editFingerprint">Edit</span><span style="cursor:pointer"
-                    data-action="close-edit-modal">✕</span></div>
+            <div class="modal-header">
+                <span class="modal-title" data-i18n="editFingerprint">Edit</span>
+                <button class="modal-close" data-action="close-edit-modal" aria-label="Close">✕</button>
+            </div>
             <div class="modal-body">
                 <label data-i18n="profileName" style="font-size:11px; font-weight:bold; opacity:0.8;">Name</label>
                 <input type="text" id="editName">
@@ -921,8 +926,10 @@
     </div>
     <div id="exportModal" class="modal-overlay" style="z-index: 2200;">
         <div class="modal-content">
-            <div class="modal-header"><span data-i18n="exportTitle">Export</span><span style="cursor:pointer"
-                    data-action="close-export-modal">✕</span></div>
+            <div class="modal-header">
+                <span class="modal-title" data-i18n="exportTitle">Export</span>
+                <button class="modal-close" data-action="close-export-modal" aria-label="Close">✕</button>
+            </div>
             <div class="export-option" data-action="open-export-select-modal" data-action-arg="full-backup">
                 <div>
                     <div class="export-title" style="color: var(--accent);" data-i18n="expFullBackup">🔐 完整备份（全部）</div>
@@ -995,8 +1002,8 @@
     <div id="passwordModal" class="modal-overlay" style="z-index: 2400;">
         <div class="modal-content" style="width: 380px;">
             <div class="modal-header">
-                <span id="passwordModalTitle" data-i18n="backupPasswordTitle">设置备份密码</span>
-                <span style="cursor:pointer" data-action="close-password-modal">✕</span>
+                <span class="modal-title" id="passwordModalTitle" data-i18n="backupPasswordTitle">设置备份密码</span>
+                <button class="modal-close" data-action="close-password-modal" aria-label="Close">✕</button>
             </div>
             <div class="modal-body">
                 <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 15px;" data-i18n="backupPasswordDesc">
@@ -1016,8 +1023,8 @@
     <div id="subEditModal" class="modal-overlay" style="z-index: 1100;">
         <div class="modal-content">
             <div class="modal-header">
-                <span data-i18n="subTitle">Subscription Settings</span>
-                <span style="cursor:pointer" data-action="close-sub-edit-modal">✕</span>
+                <span class="modal-title" data-i18n="subTitle">Subscription Settings</span>
+                <button class="modal-close" data-action="close-sub-edit-modal" aria-label="Close">✕</button>
             </div>
             <input type="hidden" id="subId">
             <label data-i18n="subName">Name</label>
@@ -1175,8 +1182,8 @@
     <div id="settingsModal" class="modal-overlay">
         <div class="modal-content">
             <div class="modal-header">
-                <span data-i18n="settingsTitle">⚙️ Settings</span>
-                <span style="cursor:pointer" data-action="close-settings">✕</span>
+                <span class="modal-title" data-i18n="settingsTitle">⚙️ Settings</span>
+                <button class="modal-close" data-action="close-settings" aria-label="Close">✕</button>
             </div>
 
             <div class="tab-header">
@@ -1466,8 +1473,10 @@
     </div>
     <div id="helpModal" class="modal-overlay">
         <div class="modal-content">
-            <div class="modal-header" style="border:none;"><span data-i18n="helpTitle">Help</span><span
-                    style="cursor:pointer" data-action="close-help">✕</span></div>
+            <div class="modal-header">
+                <span class="modal-title" data-i18n="helpTitle">Help</span>
+                <button class="modal-close" data-action="close-help" aria-label="Close">✕</button>
+            </div>
             <div class="tab-header">
                 <div class="tab-btn active" data-action="switch-help-tab" data-action-arg="manual" data-i18n="tabManual">Manual</div>
                 <div class="tab-btn" data-action="switch-help-tab" data-action-arg="about" data-i18n="tabAbout">About</div>
@@ -1480,8 +1489,10 @@
     </div>
     <div id="inputModal" class="modal-overlay" style="z-index: 2100;">
         <div class="modal-content">
-            <div class="modal-header"><span id="inputModalTitle">Input</span><span style="cursor:pointer"
-                    data-action="close-input-modal">✕</span></div><textarea id="inputModalValue" rows="5"
+            <div class="modal-header">
+                <span class="modal-title" id="inputModalTitle">Input</span>
+                <button class="modal-close" data-action="close-input-modal" aria-label="Close">✕</button>
+            </div><textarea id="inputModalValue" rows="5"
                 spellcheck="false"></textarea>
             <div style="text-align:right; margin-top:10px;"><button data-action="submit-input-modal"
                     data-i18n="done">OK</button></div>

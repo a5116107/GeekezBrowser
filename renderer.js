@@ -5963,21 +5963,35 @@ function setTheme(themeName) {
 
 // Show Alert (supports loading state)
 function showAlert(msg, showBtn = true) {
-    document.getElementById('alertMsg').innerText = msg;
+    try { hoistGlobalModalsToBody(); } catch (e) { }
+    const msgEl = document.getElementById('alertMsg');
+    const modal = document.getElementById('alertModal');
+    if (!msgEl || !modal) {
+        console.error('[ui] alert modal elements missing', { hasMsg: !!msgEl, hasModal: !!modal });
+        return;
+    }
+    msgEl.innerText = msg;
     const btn = document.getElementById('alertBtn');
     if (btn) btn.style.display = showBtn ? 'block' : 'none';
-    document.getElementById('alertModal').style.display = 'flex';
+    modal.style.display = 'flex';
 }
 function showConfirm(msg, callback) {
+    try { hoistGlobalModalsToBody(); } catch (e) { }
     const altBtn = document.getElementById('confirmAltBtn');
     if (altBtn) altBtn.style.display = 'none';
     const okBtn = document.getElementById('confirmOkBtn');
     if (okBtn) okBtn.textContent = t('confirm') || 'Confirm';
     confirmAltCallback = null;
     confirmCancelCallback = null;
-    document.getElementById('confirmMsg').innerText = msg;
-    document.getElementById('confirmModal').style.display = 'flex';
+    const msgEl = document.getElementById('confirmMsg');
     const modal = document.getElementById('confirmModal');
+    if (!msgEl || !modal) {
+        console.error('[ui] confirm modal elements missing', { hasMsg: !!msgEl, hasModal: !!modal });
+        showAlert(msg);
+        return;
+    }
+    msgEl.innerText = msg;
+    modal.style.display = 'flex';
     logModalState('confirmModal.showConfirm', modal);
     requestAnimationFrame(() => logModalState('confirmModal.showConfirm.raf', modal));
     setTimeout(() => logModalState('confirmModal.showConfirm.t20', modal), 20);
@@ -6884,6 +6898,7 @@ async function showProfileErrorWithActions(prefix, errorLike, stage = '', profil
 }
 
 function showConfirmChoice(msg, options) {
+    try { hoistGlobalModalsToBody(); } catch (e) { }
     const altBtn = document.getElementById('confirmAltBtn');
     if (altBtn) {
         altBtn.textContent = options && options.altText ? options.altText : 'Alt';
@@ -6921,6 +6936,7 @@ function closeConfirm(result) {
 }
 
 function showInput(title, callback) {
+    try { hoistGlobalModalsToBody(); } catch (e) { }
     document.getElementById('inputModalTitle').innerText = title;
     document.getElementById('inputModalValue').value = '';
     document.getElementById('inputModal').style.display = 'flex';
@@ -7451,6 +7467,38 @@ function navigateTo(page) {
 // =========================================================
 let currentProxyPageExpandedId = null;
 let proxyPageEventsBound = false;
+let proxyPageSelectedIds = new Set();
+let proxyPageLastVisibleIds = [];
+
+function updateProxyPageBatchDeleteButton() {
+    const btn = document.querySelector('button[data-action="proxy-page-batch-delete"]');
+    if (!btn) return;
+    const base = t('proxyBatchDelete') || 'Delete Selected';
+    const count = proxyPageSelectedIds ? proxyPageSelectedIds.size : 0;
+    btn.disabled = count <= 0;
+    btn.textContent = count > 0 ? `${base} (${count})` : base;
+    btn.title = count > 0
+        ? ''
+        : (tText('proxyBatchDeleteNeedSelect', 'Select at least one node first (left checkbox).'));
+}
+
+function updateProxyPageSelectAllUi() {
+    const el = document.getElementById('selectAllProxies');
+    if (!(el instanceof HTMLInputElement)) return;
+    const visible = Array.isArray(proxyPageLastVisibleIds) ? proxyPageLastVisibleIds : [];
+    const selected = proxyPageSelectedIds instanceof Set ? proxyPageSelectedIds : new Set();
+    const total = visible.length;
+    const selectedVisible = visible.reduce((acc, id) => acc + (selected.has(id) ? 1 : 0), 0);
+    el.indeterminate = selectedVisible > 0 && selectedVisible < total;
+    el.checked = total > 0 && selectedVisible === total;
+}
+
+function clearProxyPageSelection() {
+    if (proxyPageSelectedIds instanceof Set) proxyPageSelectedIds.clear();
+    proxyPageLastVisibleIds = [];
+    updateProxyPageBatchDeleteButton();
+    updateProxyPageSelectAllUi();
+}
 
 function openProxyPage() {
     proxyListViewState = loadProxyListViewState();
@@ -7511,12 +7559,26 @@ function renderProxyPageTable() {
     // Sync view state from page controls
     syncProxyPageViewState();
 
+    // Prune selection for nodes no longer present in this group (e.g., subscription refresh).
+    try {
+        const present = new Set(allNodes.map((n) => String(n && n.id ? n.id : '')).filter(Boolean));
+        if (proxyPageSelectedIds instanceof Set && proxyPageSelectedIds.size > 0) {
+            Array.from(proxyPageSelectedIds).forEach((id) => {
+                if (!present.has(id)) proxyPageSelectedIds.delete(id);
+            });
+        }
+    } catch (e) { }
+
     const filtered = applyProxyListFilterAndSort(allNodes);
+    proxyPageLastVisibleIds = filtered.map((n) => String(n && n.id ? n.id : '')).filter(Boolean);
     const metrics = computeProxyGroupMetrics(allNodes);
     updateProxyPageFilterCounts(metrics);
 
     tbody.textContent = '';
     if (filtered.length === 0) {
+        proxyPageLastVisibleIds = [];
+        updateProxyPageSelectAllUi();
+        updateProxyPageBatchDeleteButton();
         if (emptyEl) {
             emptyEl.style.display = '';
             emptyEl.textContent = allNodes.length === 0
@@ -7534,7 +7596,9 @@ function renderProxyPageTable() {
     filtered.forEach((node, idx) => {
         const proxyId = String(node.id || '');
         const isExpanded = currentProxyPageExpandedId === proxyId;
-        const isSelected = globalSettings.selectedId === proxyId;
+        const isActive = globalSettings.selectedId === proxyId;
+        const isEnabled = node && node.enable !== false;
+        const isMarked = proxyPageSelectedIds instanceof Set ? proxyPageSelectedIds.has(proxyId) : false;
         const statusTag = getNodeStatusTag(node);
         const protocol = getProxyNodeProtocol(node);
         const address = extractProxyAddress(node.url);
@@ -7544,35 +7608,35 @@ function renderProxyPageTable() {
 
         // Main row
         const tr = document.createElement('tr');
-        tr.className = `proxy-page-row${isExpanded ? ' is-expanded' : ''}`;
+        tr.className = `proxy-page-row${isExpanded ? ' is-expanded' : ''}${isEnabled ? '' : ' is-disabled'}${isActive ? ' is-active' : ''}${isMarked ? ' is-marked' : ''}`;
         tr.setAttribute('data-proxy-id', proxyId);
 
-        // 1. Checkbox/Radio
-        const tdSel = document.createElement('td');
-        if (useSingleMode) {
-            const radio = document.createElement('input');
-            radio.type = 'radio';
-            radio.name = 'proxyPageSelect';
-            radio.className = 'row-checkbox';
-            radio.checked = isSelected;
-            radio.setAttribute('data-proxy-id', proxyId);
-            tdSel.appendChild(radio);
-        } else {
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.className = 'row-checkbox';
-            cb.checked = Boolean(node.enable);
-            cb.setAttribute('data-proxy-id', proxyId);
-            tdSel.appendChild(cb);
-        }
-        tr.appendChild(tdSel);
+        // 1. Selection (for batch operations)
+        const tdMark = document.createElement('td');
+        const markCb = document.createElement('input');
+        markCb.type = 'checkbox';
+        markCb.className = 'row-checkbox proxy-select';
+        markCb.checked = isMarked;
+        markCb.setAttribute('data-proxy-id', proxyId);
+        tdMark.appendChild(markCb);
+        tr.appendChild(tdMark);
 
-        // 2. Index
+        // 2. Enable (controls whether the node participates in pre-proxy pool)
+        const tdEn = document.createElement('td');
+        const enCb = document.createElement('input');
+        enCb.type = 'checkbox';
+        enCb.className = 'row-checkbox proxy-enable';
+        enCb.checked = isEnabled;
+        enCb.setAttribute('data-proxy-id', proxyId);
+        tdEn.appendChild(enCb);
+        tr.appendChild(tdEn);
+
+        // 3. Index
         const tdIdx = document.createElement('td');
         tdIdx.textContent = String(idx + 1);
         tr.appendChild(tdIdx);
 
-        // 3. Name
+        // 4. Name
         const tdName = document.createElement('td');
         const nameSpan = document.createElement('span');
         nameSpan.style.fontWeight = '600';
@@ -7580,7 +7644,7 @@ function renderProxyPageTable() {
         tdName.appendChild(nameSpan);
         tr.appendChild(tdName);
 
-        // 4. Protocol
+        // 5. Protocol
         const tdProto = document.createElement('td');
         const protoSpan = document.createElement('span');
         protoSpan.className = 'proxy-page-proto';
@@ -7588,7 +7652,7 @@ function renderProxyPageTable() {
         tdProto.appendChild(protoSpan);
         tr.appendChild(tdProto);
 
-        // 5. Address
+        // 6. Address
         const tdAddr = document.createElement('td');
         const addrSpan = document.createElement('span');
         addrSpan.className = 'proxy-page-addr';
@@ -7597,7 +7661,7 @@ function renderProxyPageTable() {
         tdAddr.appendChild(addrSpan);
         tr.appendChild(tdAddr);
 
-        // 6. Status
+        // 7. Status
         const tdStatus = document.createElement('td');
         const statusDiv = document.createElement('div');
         statusDiv.className = 'status-cell';
@@ -7614,7 +7678,7 @@ function renderProxyPageTable() {
         tdStatus.appendChild(statusDiv);
         tr.appendChild(tdStatus);
 
-        // 7. Latency
+        // 8. Latency
         const tdLat = document.createElement('td');
         const latSpan = document.createElement('span');
         latSpan.className = 'proxy-page-latency';
@@ -7627,7 +7691,7 @@ function renderProxyPageTable() {
         tdLat.appendChild(latSpan);
         tr.appendChild(tdLat);
 
-        // 8. Actions
+        // 9. Actions
         const tdAct = document.createElement('td');
         const actDiv = document.createElement('div');
         actDiv.className = 'actions-cell';
@@ -7638,6 +7702,16 @@ function renderProxyPageTable() {
         testBtn.setAttribute('data-role', 'proxy-page-test');
         testBtn.setAttribute('data-proxy-id', proxyId);
         actDiv.appendChild(testBtn);
+
+        if (useSingleMode) {
+            const useBtn = document.createElement('button');
+            useBtn.className = 'action-btn';
+            useBtn.textContent = isActive ? (t('proxyUsing') || 'Using') : (t('proxyUse') || 'Use');
+            useBtn.setAttribute('data-role', 'proxy-page-use');
+            useBtn.setAttribute('data-proxy-id', proxyId);
+            if (isActive) useBtn.disabled = true;
+            actDiv.appendChild(useBtn);
+        }
 
         if (isManual) {
             const editBtn = document.createElement('button');
@@ -7664,13 +7738,16 @@ function renderProxyPageTable() {
         expandTr.className = `proxy-page-expand-row${isExpanded ? ' is-open' : ''}`;
         expandTr.setAttribute('data-expand-for', proxyId);
         const expandTd = document.createElement('td');
-        expandTd.colSpan = 8;
+        expandTd.colSpan = 9;
         if (isExpanded) {
             expandTd.appendChild(buildProxyPageDetail(node));
         }
         expandTr.appendChild(expandTd);
         tbody.appendChild(expandTr);
     });
+
+    updateProxyPageSelectAllUi();
+    updateProxyPageBatchDeleteButton();
 }
 
 function buildProxyPageDetail(node) {
@@ -7755,6 +7832,22 @@ function ensureProxyPageEventsBound() {
     proxyPageEventsBound = true;
     if (isClickDebugEnabled()) console.log('[click-debug] proxy page events bound');
 
+    const selectAll = document.getElementById('selectAllProxies');
+    if (selectAll instanceof HTMLInputElement && !selectAll.dataset.bindInit) {
+        selectAll.dataset.bindInit = '1';
+        selectAll.addEventListener('change', () => {
+            const checked = !!selectAll.checked;
+            const visible = Array.isArray(proxyPageLastVisibleIds) ? proxyPageLastVisibleIds : [];
+            if (!(proxyPageSelectedIds instanceof Set)) proxyPageSelectedIds = new Set();
+            visible.forEach((id) => {
+                if (!id) return;
+                if (checked) proxyPageSelectedIds.add(id);
+                else proxyPageSelectedIds.delete(id);
+            });
+            renderProxyPageTable();
+        });
+    }
+
     const tbody = document.getElementById('proxyPageTableBody');
     if (tbody) {
         tbody.addEventListener('click', (e) => {
@@ -7775,6 +7868,12 @@ function ensureProxyPageEventsBound() {
                     testSingleProxy(proxyId, actionBtn);
                 } else if (role === 'proxy-page-edit') {
                     openProxyPageEditPanel(proxyId);
+                } else if (role === 'proxy-page-use') {
+                    try {
+                        const p = (globalSettings.preProxies || []).find((x) => x && String(x.id) === String(proxyId));
+                        if (p && p.enable === false) p.enable = true;
+                    } catch (e) { }
+                    selP(proxyId);
                 } else if (role === 'proxy-page-del') {
                     confirmDeleteProxyNode(proxyId);
                 }
@@ -7788,12 +7887,48 @@ function ensureProxyPageEventsBound() {
             if (checkbox) {
                 const pid = checkbox.getAttribute('data-proxy-id');
                 if (!pid) return;
-                if (checkbox.type === 'radio') {
-                    selP(pid);
-                } else {
-                    togP(pid);
+                if (checkbox.classList.contains('proxy-select')) {
+                    if (!(proxyPageSelectedIds instanceof Set)) proxyPageSelectedIds = new Set();
+                    if (checkbox.checked) proxyPageSelectedIds.add(pid);
+                    else proxyPageSelectedIds.delete(pid);
+                    const row = checkbox.closest('tr.proxy-page-row');
+                    if (row) row.classList.toggle('is-marked', !!checkbox.checked);
+                    updateProxyPageSelectAllUi();
+                    updateProxyPageBatchDeleteButton();
+                    return;
+                }
+                if (checkbox.classList.contains('proxy-enable')) {
+                    setProxyEnabled(pid, checkbox.checked);
+                    return;
                 }
                 return;
+            }
+
+            // Make the checkbox cells clickable (not only the tiny checkbox itself).
+            const cell = target.closest('td');
+            if (cell) {
+                const markCb = cell.querySelector('input.row-checkbox.proxy-select[data-proxy-id]');
+                if (markCb instanceof HTMLInputElement) {
+                    const pid = markCb.getAttribute('data-proxy-id');
+                    if (!pid) return;
+                    markCb.checked = !markCb.checked;
+                    if (!(proxyPageSelectedIds instanceof Set)) proxyPageSelectedIds = new Set();
+                    if (markCb.checked) proxyPageSelectedIds.add(pid);
+                    else proxyPageSelectedIds.delete(pid);
+                    const row = markCb.closest('tr.proxy-page-row');
+                    if (row) row.classList.toggle('is-marked', !!markCb.checked);
+                    updateProxyPageSelectAllUi();
+                    updateProxyPageBatchDeleteButton();
+                    return;
+                }
+                const enCb = cell.querySelector('input.row-checkbox.proxy-enable[data-proxy-id]');
+                if (enCb instanceof HTMLInputElement) {
+                    const pid = enCb.getAttribute('data-proxy-id');
+                    if (!pid) return;
+                    enCb.checked = !enCb.checked;
+                    setProxyEnabled(pid, enCb.checked);
+                    return;
+                }
             }
 
             // Row click -> expand/collapse
@@ -7918,6 +8053,7 @@ async function saveProxyPageNode() {
 function switchProxyPageGroup(groupId) {
     currentProxyGroup = groupId || 'manual';
     currentProxyPageExpandedId = null;
+    clearProxyPageSelection();
     renderProxyPageGroupTabs();
     renderProxyPageTable();
 }
@@ -10915,6 +11051,7 @@ async function saveEditProfile() {
 }
 
 async function openProxyManager() {
+    try { hoistGlobalModalsToBody(); } catch (e) { }
     globalSettings = await window.electronAPI.getSettings();
     if (!globalSettings.subscriptions) globalSettings.subscriptions = [];
     proxyCustomQueryPresets = loadProxyCustomQueryPresets();
@@ -10966,6 +11103,7 @@ async function openProxyManager() {
 function closeProxyManager() {
     const modal = document.getElementById('proxyModal');
     if (modal) modal.style.display = 'none';
+    try { hoistGlobalModalsToBody(); } catch (e) { }
     flushScheduledSettingsSave();
     updateToolbar();
 }
@@ -12628,19 +12766,34 @@ function renderProxyNodes() {
 
         if (metaStrip.childElementCount > 0) mid.appendChild(metaStrip);
 
-        if (isExpertMode && p.ipInfo && (p.ipInfo.country || p.ipInfo.city || p.ipInfo.timezone || p.ipInfo.ip)) {
-            const parts = [];
-            if (p.ipInfo.ip) parts.push(p.ipInfo.ip);
-            if (p.ipInfo.country) parts.push(p.ipInfo.country);
-            if (p.ipInfo.city) parts.push(p.ipInfo.city);
-            if (p.ipInfo.timezone) parts.push(p.ipInfo.timezone);
-            const text = parts.join(' · ');
+        const cognitiveMode = normalizeProxyCognitiveMode(proxyCognitiveMode);
+        const canShowGeo = cognitiveMode !== 'quick';
+        if (canShowGeo && p.ipInfo && (p.ipInfo.country || p.ipInfo.city || p.ipInfo.timezone || p.ipInfo.ip)) {
+            const titleParts = [];
+            if (p.ipInfo.ip) titleParts.push(p.ipInfo.ip);
+            if (p.ipInfo.country) titleParts.push(p.ipInfo.country);
+            if (p.ipInfo.city) titleParts.push(p.ipInfo.city);
+            if (p.ipInfo.timezone) titleParts.push(p.ipInfo.timezone);
 
-            const ipBadge = document.createElement('div');
-            ipBadge.className = 'proxy-sub proxy-sub-ip';
-            ipBadge.title = text;
-            ipBadge.textContent = text;
-            mid.appendChild(ipBadge);
+            const parts = [];
+            if (cognitiveMode === 'expert') {
+                parts.push(...titleParts);
+            } else {
+                // Standard mode: keep it short (country/city first, fallback to IP).
+                if (p.ipInfo.country) parts.push(p.ipInfo.country);
+                if (p.ipInfo.city) parts.push(p.ipInfo.city);
+                if (parts.length === 0 && p.ipInfo.ip) parts.push(p.ipInfo.ip);
+            }
+            const text = parts.join(' · ');
+            const title = titleParts.join(' · ') || text;
+
+            if (text) {
+                const ipBadge = document.createElement('div');
+                ipBadge.className = 'proxy-sub proxy-sub-ip';
+                ipBadge.title = title;
+                ipBadge.textContent = text;
+                mid.appendChild(ipBadge);
+            }
         }
 
         const right = document.createElement('div');
@@ -12907,7 +13060,14 @@ async function importProxyBatchFromText(rawText, { defaultScheme = 'socks5', aut
 
 async function openProxyBatchImport() {
     if (currentProxyGroup !== 'manual') {
-        showAlert(tText('proxyBatchImportManualOnly', 'Switch to Manual group before batch importing nodes.'));
+        const msg = tText(
+            'proxyBatchImportManualConfirm',
+            'Batch import saves nodes into Manual group only.\nSwitch to Manual and continue?'
+        );
+        showConfirm(msg, async () => {
+            switchProxyPageGroup('manual');
+            await openProxyBatchImport();
+        });
         return;
     }
     showInput(tText('proxyBatchImportTitle', 'Batch import nodes (one per line)'), async (value) => {
@@ -13066,39 +13226,76 @@ async function deleteProxyBatchFromText(rawText, { defaultScheme = 'socks5', aut
 }
 
 async function openProxyBatchDelete() {
-    showInput(tText('proxyBatchDeleteTitle', 'Batch delete nodes (one per line)'), async (value) => {
-        await deleteProxyBatchFromText(value, { defaultScheme: 'socks5', autoScheme: true });
-    });
-    const inputEl = document.getElementById('inputModalValue');
-    if (inputEl) {
-        inputEl.value = '';
-        inputEl.placeholder = tText('proxyBatchDeletePlaceholder', 'host:port or scheme://host:port (auto-detect if omitted)');
-        inputEl.rows = 8;
+    const selected = proxyPageSelectedIds instanceof Set ? Array.from(proxyPageSelectedIds) : [];
+    const nodes = Array.isArray(globalSettings.preProxies) ? globalSettings.preProxies.slice() : [];
+    const selectedSet = new Set(selected.filter(Boolean));
+    const selectedNodes = nodes.filter((n) => n && n.id && selectedSet.has(String(n.id)));
+
+    if (selectedNodes.length > 0) {
+        const subCount = selectedNodes.filter((n) => n && n.groupId && n.groupId !== 'manual').length;
+        const warn = subCount > 0
+            ? `\n\n${tText('proxyBatchDeleteSubWarning', 'Note: subscription nodes may re-appear after next refresh.')}`
+            : '';
+        const msg = tFormat('proxyBatchDeleteSelectedConfirm', 'Delete selected {count} nodes?', { count: selectedNodes.length }) + warn;
+        showConfirm(msg, async () => {
+            globalSettings.preProxies = nodes.filter((n) => !(n && n.id && selectedSet.has(String(n.id))));
+            clearProxyPageSelection();
+            scheduleSettingsSave(0);
+            renderProxyNodes();
+            updateToolbar();
+            showToast(tFormat('proxyBatchDeleteSelectedSummary', 'Deleted {count} selected nodes', { count: selectedNodes.length }), 2600);
+        });
+        return;
     }
+
+    showAlert(tText('proxyBatchDeleteNeedSelect', 'Select at least one node first (left checkbox).'));
 }
 
 // --- Subscription Management ---
 function openSubEditModal(isNew) {
+    try { hoistGlobalModalsToBody(); } catch (e) { }
     if (isClickDebugEnabled()) console.log('[click-debug] openSubEditModal invoked', isNew);
     const modal = document.getElementById('subEditModal');
+    if (!modal) {
+        console.error('[ui] sub edit modal missing');
+        return;
+    }
     const headerTitle = modal.querySelector('.modal-header span'); if (headerTitle) headerTitle.innerText = t('subTitle');
     const labels = modal.querySelectorAll('label'); if (labels[0]) labels[0].innerText = t('subName'); if (labels[1]) labels[1].innerText = t('subUrl'); if (labels[2]) labels[2].innerText = t('subInterval');
-    const options = document.getElementById('subInterval').options; options[0].text = t('optDisabled'); options[1].text = t('opt24h'); options[2].text = t('opt72h'); options[3].text = t('optCustom');
-    const btnDel = document.getElementById('btnDelSub'); btnDel.innerText = t('btnDelSub'); btnDel.style.display = isNew ? 'none' : 'inline-block';
+    const intervalEl = document.getElementById('subInterval');
+    const options = intervalEl && intervalEl.options ? intervalEl.options : null;
+    if (options && options[0]) options[0].text = t('optDisabled');
+    if (options && options[1]) options[1].text = t('opt24h');
+    if (options && options[2]) options[2].text = t('opt72h');
+    if (options && options[3]) options[3].text = t('optCustom');
+    const btnDel = document.getElementById('btnDelSub');
+    if (btnDel) {
+        btnDel.innerText = t('btnDelSub');
+        btnDel.style.display = isNew ? 'none' : 'inline-block';
+    }
     const btnSave = modal.querySelector('button[data-action="save-subscription"]'); if (btnSave) btnSave.innerText = t('btnSaveUpdate');
 
     if (isNew) {
-        document.getElementById('subId').value = '';
-        document.getElementById('subName').value = '';
-        document.getElementById('subUrl').value = '';
-        document.getElementById('subInterval').value = '24';
-        document.getElementById('subCustomInterval').style.display = 'none';
+        const subIdEl = document.getElementById('subId');
+        const subNameEl = document.getElementById('subName');
+        const subUrlEl = document.getElementById('subUrl');
+        if (subIdEl) subIdEl.value = '';
+        if (subNameEl) subNameEl.value = '';
+        if (subUrlEl) subUrlEl.value = '';
+        if (intervalEl) intervalEl.value = '24';
+        const customEl = document.getElementById('subCustomInterval');
+        if (customEl) customEl.style.display = 'none';
     }
     modal.style.display = 'flex';
     logModalState('subEditModal.open', modal);
     requestAnimationFrame(() => logModalState('subEditModal.open.raf', modal));
     setTimeout(() => logModalState('subEditModal.open.t20', modal), 20);
-    document.getElementById('subInterval').onchange = function () { document.getElementById('subCustomInterval').style.display = this.value === 'custom' ? 'block' : 'none'; }
+    if (intervalEl) {
+        intervalEl.onchange = function () {
+            const customEl = document.getElementById('subCustomInterval');
+            if (customEl) customEl.style.display = this.value === 'custom' ? 'block' : 'none';
+        };
+    }
 }
 
 function closeSubEditModal() { document.getElementById('subEditModal').style.display = 'none'; }
@@ -13611,6 +13808,17 @@ function togP(id) {
     updateToolbar();
 }
 
+function setProxyEnabled(id, enabled) {
+    const pid = String(id || '');
+    if (!pid) return;
+    const p = (globalSettings.preProxies || []).find((x) => x && String(x.id) === pid);
+    if (p) p.enable = enabled !== false;
+    currentProxyInspectorId = pid;
+    scheduleSettingsSave();
+    renderProxyNodes();
+    updateToolbar();
+}
+
 async function saveProxySettings() {
     const modeEl = document.getElementById('proxyMode');
     const notifyEl = document.getElementById('notifySwitch');
@@ -14038,9 +14246,14 @@ function switchHelpTab(tabName) {
 // Settings Modal Functions
 // ============================================================================
 function openSettings() {
+    try { hoistGlobalModalsToBody(); } catch (e) { }
     if (isClickDebugEnabled()) console.log('[click-debug] openSettings invoked');
-    document.getElementById('settingsModal').style.display = 'flex';
     const modal = document.getElementById('settingsModal');
+    if (!modal) {
+        console.error('[ui] settings modal missing');
+        return;
+    }
+    modal.style.display = 'flex';
     logModalState('settingsModal.open', modal);
     requestAnimationFrame(() => logModalState('settingsModal.open.raf', modal));
     setTimeout(() => logModalState('settingsModal.open.t20', modal), 20);

@@ -3159,12 +3159,15 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto', testOptions 
                 }
 
                 const ip = (geo && geo.ip) ? geo.ip : publicIp;
+                const countryCode = geo ? (geo.countryCode || geo.country || null) : null;
+                const countryName = geo ? (geo.countryName || null) : null;
+                const countryDisplay = countryName || countryCode || null;
                 const geoOut = geo ? {
                     ip: ip || null,
-                    // Keep "country" as country code, and provide optional countryName for UI/auto-link.
-                    country: geo.country,
-                    countryCode: geo.countryCode || geo.country || null,
-                    countryName: geo.countryName || null,
+                    // Prefer country display name in UI, keep countryCode for stable logic/linking.
+                    country: countryDisplay,
+                    countryCode,
+                    countryName,
                     region: geo.region,
                     city: geo.city,
                     asn: geo.asn,
