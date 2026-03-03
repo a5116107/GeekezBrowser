@@ -4061,7 +4061,8 @@ button.icon-btn:hover,
 .proxy-page-table td:nth-child(5) { max-width: 80px; }
 .proxy-page-table td:nth-child(6) { max-width: 200px; }
 .proxy-page-table td:nth-child(7) { max-width: 100px; }
-.proxy-page-table td:nth-child(8) { max-width: 100px; }
+.proxy-page-table td:nth-child(8) { max-width: 240px; }
+.proxy-page-table td:nth-child(9) { max-width: 100px; }
 
 /* Protocol badge */
 .proxy-page-proto {
@@ -4079,6 +4080,17 @@ button.icon-btn:hover,
     color: var(--text-secondary);
     white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; max-width: 200px;
+    display: inline-block;
+}
+
+/* Exit (geo + ip, truncated) */
+.proxy-page-exit {
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
     display: inline-block;
 }
 

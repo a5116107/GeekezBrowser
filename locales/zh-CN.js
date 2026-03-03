@@ -996,6 +996,7 @@ window.zhCN = {
     colProxy: "代理信息",
     colEngine: "引擎",
     colStatus: "状态",
+    colExit: "出口",
     colActions: "操作",
     colLastOpened: "最近打开",
     // Misc new UI

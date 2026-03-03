@@ -20,6 +20,7 @@
     protocolBucketed: true,
     yieldEvery: 20,
     testProfile: 'standard',
+    engineHint: 'auto',
     probeTimeoutMs: 7000,
     ipTimeoutMs: 8000,
     geoTimeoutMs: 8000,
@@ -84,6 +85,13 @@
     return 'standard';
   }
 
+  function normalizeEngineHintName(input) {
+    var raw = String(input || '').trim().toLowerCase();
+    if (raw === 'xray') return 'xray';
+    if (raw === 'sing-box' || raw === 'singbox') return 'sing-box';
+    return 'auto';
+  }
+
   function detectHardwareConcurrency(runtime) {
     var fromRuntime = runtime && Number(runtime.hardwareConcurrency);
     if (Number.isFinite(fromRuntime) && fromRuntime > 0) return Math.max(1, Math.floor(fromRuntime));
@@ -119,6 +127,7 @@
       protocolBucketed: source.protocolBucketed !== false,
       yieldEvery: clampInt(source.yieldEvery, 1, 200, DEFAULT_PROXY_BATCH_TEST_STRATEGY.yieldEvery),
       testProfile: profile,
+      engineHint: normalizeEngineHintName(source.engineHint),
       probeTimeoutMs: clampInt(source.probeTimeoutMs, 2000, 30000, preset.probeTimeoutMs),
       ipTimeoutMs: clampInt(source.ipTimeoutMs, 2000, 30000, preset.ipTimeoutMs),
       geoTimeoutMs: clampInt(source.geoTimeoutMs, 2000, 30000, preset.geoTimeoutMs),

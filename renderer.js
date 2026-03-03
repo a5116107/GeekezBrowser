@@ -1128,6 +1128,13 @@ function normalizeProxyTestProfileValue(value) {
     return 'standard';
 }
 
+function normalizeProxyTestEngineHintValue(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'xray') return 'xray';
+    if (normalized === 'sing-box' || normalized === 'singbox') return 'sing-box';
+    return 'auto';
+}
+
 function applyProxyStrategyProfileChipState(profile) {
     const normalized = normalizeProxyTestProfileValue(profile);
     const profileEl = document.getElementById('proxyTestProfile');
@@ -5341,6 +5348,7 @@ function normalizeProxyBatchTestStrategyForUi(input, nodeCount = 0) {
         perProtocolBackoff: true,
         yieldEvery: 20,
         testProfile: 'standard',
+        engineHint: 'auto',
         probeTimeoutMs: 7000,
         ipTimeoutMs: 8000,
         geoTimeoutMs: 8000,
@@ -5417,9 +5425,10 @@ function readProxyBatchStrategyFromInputs() {
 
 function buildProxyTestInvokePayload(proxyUrl, strategy) {
     const normalized = normalizeProxyBatchTestStrategyForUi(strategy, 1);
+    const engineHint = normalizeProxyTestEngineHintValue(normalized.engineHint || 'auto');
     return {
         proxyStr: proxyUrl,
-        engineHint: 'auto',
+        engineHint,
         options: {
             profile: normalized.testProfile || 'standard',
             probeTimeoutMs: normalized.probeTimeoutMs,
@@ -7502,9 +7511,80 @@ function clearProxyPageSelection() {
 
 function openProxyPage() {
     proxyListViewState = loadProxyListViewState();
+    const strategy = normalizeProxyBatchTestStrategyForUi(globalSettings[PROXY_BATCH_TEST_STRATEGY_KEY], (globalSettings.preProxies || []).length);
+    globalSettings[PROXY_BATCH_TEST_STRATEGY_KEY] = strategy;
+    applyProxyPageTestStrategyToToolbar(strategy);
     renderProxyPageGroupTabs();
     renderProxyPageTable();
     ensureProxyPageEventsBound();
+}
+
+function applyProxyPageTestStrategyToToolbar(strategy) {
+    const normalized = normalizeProxyBatchTestStrategyForUi(strategy, (globalSettings.preProxies || []).length);
+    const profileEl = document.getElementById('proxyPageTestProfile');
+    const geoEl = document.getElementById('proxyPageTestIncludeGeo');
+    const engineEl = document.getElementById('proxyPageTestEngineHint');
+
+    if (profileEl) {
+        const profile = normalizeProxyTestProfileValue(normalized.testProfile || 'standard');
+        if (profileEl.value !== profile) profileEl.value = profile;
+    }
+    if (geoEl instanceof HTMLInputElement) {
+        geoEl.checked = normalized.includeGeo !== false;
+    }
+    if (engineEl) {
+        const engineHint = normalizeProxyTestEngineHintValue(normalized.engineHint || 'auto');
+        if (engineEl.value !== engineHint) engineEl.value = engineHint;
+    }
+
+    const pageTestBtn = document.getElementById('proxyPageTestAllBtn');
+    if (pageTestBtn) {
+        const profileLabel = formatProxyTestProfileLabel(normalized.testProfile || 'standard');
+        const engineLabel = normalizeProxyTestEngineHintValue(normalized.engineHint || 'auto');
+        const geoLabel = normalized.includeGeo === false ? 'no-geo' : 'geo';
+        pageTestBtn.title = `Profile=${profileLabel} · ${geoLabel} · engine=${engineLabel}`;
+    }
+}
+
+async function saveProxyPageTestStrategyFromToolbar({ profileChanged = false } = {}) {
+    const profileEl = document.getElementById('proxyPageTestProfile');
+    const geoEl = document.getElementById('proxyPageTestIncludeGeo');
+    const engineEl = document.getElementById('proxyPageTestEngineHint');
+    const profile = profileEl ? normalizeProxyTestProfileValue(profileEl.value || '') : null;
+    const includeGeo = geoEl instanceof HTMLInputElement ? Boolean(geoEl.checked) : undefined;
+    const engineHint = engineEl ? normalizeProxyTestEngineHintValue(engineEl.value || '') : undefined;
+
+    const current = normalizeProxyBatchTestStrategyForUi(globalSettings[PROXY_BATCH_TEST_STRATEGY_KEY], (globalSettings.preProxies || []).length);
+    const raw = { ...current };
+    if (profile) {
+        raw.testProfile = profile;
+        if (profileChanged) {
+            delete raw.probeTimeoutMs;
+            delete raw.ipTimeoutMs;
+            delete raw.geoTimeoutMs;
+            delete raw.probeCount;
+            delete raw.probeParallelism;
+            delete raw.engineBootWaitMs;
+        }
+    }
+    if (typeof includeGeo === 'boolean') raw.includeGeo = includeGeo;
+    if (engineHint) raw.engineHint = engineHint;
+
+    const normalized = normalizeProxyBatchTestStrategyForUi(raw, (globalSettings.preProxies || []).length);
+    globalSettings[PROXY_BATCH_TEST_STRATEGY_KEY] = normalized;
+    applyProxyBatchStrategyToInputs(normalized);
+    applyProxyPageTestStrategyToToolbar(normalized);
+
+    if (isClickDebugEnabled()) {
+        console.log('[click-debug]', {
+            label: 'proxyPage.saveStrategy',
+            profile: normalized.testProfile,
+            includeGeo: normalized.includeGeo,
+            engineHint: normalized.engineHint,
+        });
+    }
+
+    await window.electronAPI.saveSettings(globalSettings);
 }
 
 function renderProxyPageGroupTabs() {
@@ -7678,7 +7758,23 @@ function renderProxyPageTable() {
         tdStatus.appendChild(statusDiv);
         tr.appendChild(tdStatus);
 
-        // 8. Latency
+        // 8. Exit (IP / Geo)
+        const tdExit = document.createElement('td');
+        const exitSpan = document.createElement('span');
+        exitSpan.className = 'proxy-page-exit';
+        const ipInfo = node && node.ipInfo && typeof node.ipInfo === 'object' ? node.ipInfo : null;
+        const ip = ipInfo && ipInfo.ip ? String(ipInfo.ip) : '';
+        const country = ipInfo && ipInfo.country ? String(ipInfo.country) : '';
+        const city = ipInfo && ipInfo.city ? String(ipInfo.city) : '';
+        const loc = [country, city].filter(Boolean).join('/');
+        if (loc && ip) exitSpan.textContent = `${loc} · ${ip}`;
+        else exitSpan.textContent = loc || ip || '-';
+        const tz = ipInfo && ipInfo.timezone ? String(ipInfo.timezone) : '';
+        exitSpan.title = tz ? `${exitSpan.textContent} · ${tz}` : exitSpan.textContent;
+        tdExit.appendChild(exitSpan);
+        tr.appendChild(tdExit);
+
+        // 9. Latency
         const tdLat = document.createElement('td');
         const latSpan = document.createElement('span');
         latSpan.className = 'proxy-page-latency';
@@ -7691,7 +7787,7 @@ function renderProxyPageTable() {
         tdLat.appendChild(latSpan);
         tr.appendChild(tdLat);
 
-        // 9. Actions
+        // 10. Actions
         const tdAct = document.createElement('td');
         const actDiv = document.createElement('div');
         actDiv.className = 'actions-cell';
@@ -7738,7 +7834,7 @@ function renderProxyPageTable() {
         expandTr.className = `proxy-page-expand-row${isExpanded ? ' is-open' : ''}`;
         expandTr.setAttribute('data-expand-for', proxyId);
         const expandTd = document.createElement('td');
-        expandTd.colSpan = 9;
+        expandTd.colSpan = 10;
         if (isExpanded) {
             expandTd.appendChild(buildProxyPageDetail(node));
         }
@@ -7966,6 +8062,29 @@ function ensureProxyPageEventsBound() {
             renderProxyPageTable();
         });
     }
+
+    // Proxy test strategy (profile / geo / engine) for Proxy Page
+    const testProfileEl = document.getElementById('proxyPageTestProfile');
+    if (testProfileEl && !testProfileEl.dataset.bindInit) {
+        testProfileEl.dataset.bindInit = '1';
+        testProfileEl.addEventListener('change', () => {
+            saveProxyPageTestStrategyFromToolbar({ profileChanged: true });
+        });
+    }
+    const testGeoEl = document.getElementById('proxyPageTestIncludeGeo');
+    if (testGeoEl instanceof HTMLInputElement && !testGeoEl.dataset.bindInit) {
+        testGeoEl.dataset.bindInit = '1';
+        testGeoEl.addEventListener('change', () => {
+            saveProxyPageTestStrategyFromToolbar({ profileChanged: false });
+        });
+    }
+    const testEngineEl = document.getElementById('proxyPageTestEngineHint');
+    if (testEngineEl && !testEngineEl.dataset.bindInit) {
+        testEngineEl.dataset.bindInit = '1';
+        testEngineEl.addEventListener('change', () => {
+            saveProxyPageTestStrategyFromToolbar({ profileChanged: false });
+        });
+    }
 }
 
 function syncProxyPageViewState() {
@@ -8026,8 +8145,18 @@ function openProxyPageEditPanel(proxyId) {
 async function saveProxyPageNode() {
     const id = document.getElementById('proxyPageEditId').value;
     let remark = document.getElementById('proxyPageNewRemark').value;
-    const url = document.getElementById('proxyPageNewUrl').value.trim();
+    let url = document.getElementById('proxyPageNewUrl').value.trim();
     if (!url) return;
+    // If user pastes host:port without scheme, infer a reasonable scheme (socks5/http/https) by port.
+    if (!url.includes('://')) {
+        try {
+            const hp = parseProxyHostPort(url);
+            if (hp && hp.host && hp.port) {
+                const scheme = detectProxySchemeFromPort(hp.port);
+                url = `${scheme}://${hp.host}:${hp.port}`;
+            }
+        } catch (e) { }
+    }
     if (!remark) remark = getProxyRemark(url) || tText('proxyManualNodeFallback', 'Manual Node');
     if (!globalSettings.preProxies) globalSettings.preProxies = [];
     if (id) {
@@ -12067,7 +12196,14 @@ function getProxyNodeDisplayRemark(node) {
 
 function getProxyNodeProtocol(node) {
     const url = node && node.url ? String(node.url) : '';
-    if (!url.includes('://')) return 'UNK';
+    if (!url.includes('://')) {
+        // Keep Proxy Page readable even if older data is stored as host:port without scheme.
+        try {
+            const hp = parseProxyHostPort(url);
+            if (hp && hp.port) return String(detectProxySchemeFromPort(hp.port) || 'UNK').toUpperCase();
+        } catch (e) { }
+        return 'UNK';
+    }
     return String(url.split('://')[0] || 'UNK').toUpperCase();
 }
 
@@ -13529,7 +13665,30 @@ async function testSingleProxy(id, btnEl = null) {
         : Array.from(document.querySelectorAll('#preProxyList button[data-action="proxy-test"]')).find(el => el.getAttribute('data-proxy-id') === id);
     if (btn) btn.innerText = "...";
     try {
-        const res = await window.electronAPI.invoke('test-proxy-node', buildProxyTestInvokePayload(p.url, strategy));
+        const payload = buildProxyTestInvokePayload(p.url, strategy);
+        if (isClickDebugEnabled()) {
+            console.log('[click-debug]', {
+                label: 'proxyTest.single.invoke',
+                proxyId: String(id),
+                proto: getProxyNodeProtocol(p),
+                addr: extractProxyAddress(p.url),
+                engineHint: payload.engineHint,
+                options: payload.options,
+            });
+        }
+        const res = await window.electronAPI.invoke('test-proxy-node', payload);
+        if (isClickDebugEnabled()) {
+            console.log('[click-debug]', {
+                label: 'proxyTest.single.result',
+                proxyId: String(id),
+                ok: Boolean(res && res.ok),
+                engine: res && (res.engine || res.primaryEngine) ? String(res.engine || res.primaryEngine) : '',
+                protocol: res && res.protocol ? String(res.protocol) : '',
+                ip: res && (res.ip || (res.geo && res.geo.ip)) ? String(res.ip || (res.geo && res.geo.ip)) : '',
+                geo: res && res.geo ? { country: res.geo.country || '', city: res.geo.city || '' } : null,
+                finalCode: res && (res.finalCode || res.code) ? String(res.finalCode || res.code) : '',
+            });
+        }
         applyProxyTestResultToNode(p, res);
         await window.electronAPI.saveSettings(globalSettings);
         renderProxyNodes();

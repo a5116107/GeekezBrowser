@@ -157,16 +157,29 @@
                 </div>
 
                 <!-- Toolbar -->
-                <div class="proxy-page-toolbar">
-                    <button data-action="proxy-page-add" data-i18n="add">+ Add</button>
-                    <button class="outline" data-action="proxy-page-batch-import" data-i18n="proxyBatchImport">Batch Import</button>
-                    <button class="danger" data-action="proxy-page-batch-delete" data-i18n="proxyBatchDelete">Batch Delete</button>
-                    <button class="outline" data-action="test-current-group" data-i18n="btnTestGroup" id="proxyPageTestAllBtn">Test All</button>
-                    <div class="proxy-page-toolbar-sep"></div>
-                    <div class="profile-filters" id="proxyPageQuickFilters">
-                        <button class="profile-filter-chip active" data-action="set-proxy-page-filter" data-action-arg="all" aria-pressed="true">
-                            <span data-i18n="proxyQuickAll">All</span><span class="count" data-role="count" id="proxyPageCountAll">0</span>
-                        </button>
+                 <div class="proxy-page-toolbar">
+                     <button data-action="proxy-page-add" data-i18n="add">+ Add</button>
+                     <button class="outline" data-action="proxy-page-batch-import" data-i18n="proxyBatchImport">Batch Import</button>
+                     <button class="danger" data-action="proxy-page-batch-delete" data-i18n="proxyBatchDelete">Batch Delete</button>
+                     <button class="outline" data-action="test-current-group" data-i18n="btnTestGroup" id="proxyPageTestAllBtn">Test All</button>
+                     <select id="proxyPageTestProfile" class="quick-switch-select no-drag" style="min-width:140px;" aria-label="Test profile">
+                         <option value="quick">Profile: Quick</option>
+                         <option value="standard" selected>Profile: Standard</option>
+                         <option value="deep">Profile: Deep</option>
+                     </select>
+                     <label style="display:flex;align-items:center;gap:6px;font-size:12px;user-select:none;">
+                         <input type="checkbox" id="proxyPageTestIncludeGeo" checked> Geo
+                     </label>
+                     <select id="proxyPageTestEngineHint" class="quick-switch-select no-drag" style="min-width:150px;" aria-label="Test engine">
+                         <option value="auto" selected>Engine: Auto</option>
+                         <option value="xray">Engine: Xray</option>
+                         <option value="sing-box">Engine: sing-box</option>
+                     </select>
+                     <div class="proxy-page-toolbar-sep"></div>
+                     <div class="profile-filters" id="proxyPageQuickFilters">
+                         <button class="profile-filter-chip active" data-action="set-proxy-page-filter" data-action-arg="all" aria-pressed="true">
+                             <span data-i18n="proxyQuickAll">All</span><span class="count" data-role="count" id="proxyPageCountAll">0</span>
+                         </button>
                         <button class="profile-filter-chip" data-action="set-proxy-page-filter" data-action-arg="pass" aria-pressed="false">
                             <span data-i18n="proxyQuickPass">Pass</span><span class="count" data-role="count" id="proxyPageCountPass">0</span>
                         </button>
@@ -212,13 +225,14 @@
                                     <th data-i18n="colEnable">On</th>
                                     <th>#</th>
                                     <th data-i18n="colName">Name</th>
-                                    <th>Protocol</th>
-                                    <th>Address</th>
-                                    <th data-i18n="colStatus">Status</th>
-                                    <th>Latency</th>
-                                    <th data-i18n="colActions">Actions</th>
-                                </tr>
-                            </thead>
+                                     <th>Protocol</th>
+                                     <th>Address</th>
+                                     <th data-i18n="colStatus">Status</th>
+                                     <th data-i18n="colExit">Exit</th>
+                                     <th>Latency</th>
+                                     <th data-i18n="colActions">Actions</th>
+                                 </tr>
+                             </thead>
                             <tbody id="proxyPageTableBody"></tbody>
                         </table>
                     </div>

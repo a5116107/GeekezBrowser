@@ -1004,6 +1004,7 @@ const enTranslations = {
     colProxy: "Proxy",
     colEngine: "Engine",
     colStatus: "Status",
+    colExit: "Exit",
     colActions: "Actions",
     colLastOpened: "Last Opened",
     // Misc new UI
