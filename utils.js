@@ -13,6 +13,117 @@ function safeDecodeUrlComponent(value) {
     try { return decodeURIComponent(String(value || '')); } catch (e) { return String(value || ''); }
 }
 
+function tryParseSocksProxyLoose(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return null;
+
+    const m = raw.match(/^(socks5h?|socks5|socks):\/\/(.+)$/i);
+    if (!m) return null;
+
+    // Drop any path/query/fragment; we only care about authority.
+    const authority = String(m[2] || '').split(/[/?#]/)[0];
+    if (!authority) return null;
+
+    const parseHostPortWithDefault = (token, defaultPort = 1080) => {
+        const t = String(token || '').trim();
+        if (!t) return null;
+
+        if (t.startsWith('[')) {
+            const close = t.indexOf(']');
+            if (close < 0) return null;
+            const host = t.slice(1, close).trim();
+            const after = t.slice(close + 1);
+            if (!after) return { host, port: defaultPort };
+            if (!after.startsWith(':')) return null;
+            const portStr = after.slice(1).trim();
+            const port = Number(portStr);
+            if (!Number.isFinite(port) || port <= 0 || port > 65535) return null;
+            return { host, port };
+        }
+
+        const colonCount = (t.match(/:/g) || []).length;
+        if (colonCount === 0) return { host: t, port: defaultPort };
+
+        // If it looks like an unbracketed IPv6 with a trailing port, split on the last colon.
+        const idx = colonCount > 1 ? t.lastIndexOf(':') : t.indexOf(':');
+        const host = t.slice(0, idx).trim();
+        const portStr = t.slice(idx + 1).trim();
+        if (!portStr) return { host, port: defaultPort };
+        const port = Number(portStr);
+        if (!Number.isFinite(port) || port <= 0 || port > 65535) return null;
+        return { host, port };
+    };
+
+    const parseUserPass = (userinfo) => {
+        const u = String(userinfo || '').trim();
+        if (!u) return { user: '', pass: '' };
+        const idx = u.indexOf(':');
+        const userRaw = idx >= 0 ? u.slice(0, idx) : u;
+        const passRaw = idx >= 0 ? u.slice(idx + 1) : '';
+        return { user: safeDecodeUrlComponent(userRaw), pass: safeDecodeUrlComponent(passRaw) };
+    };
+
+    // Standard URL form: userinfo@host:port
+    const at = authority.lastIndexOf('@');
+    if (at >= 0) {
+        const userinfo = authority.slice(0, at);
+        const hostToken = authority.slice(at + 1);
+        const hp = parseHostPortWithDefault(hostToken, 1080);
+        if (!hp || !hp.host) return null;
+
+        let { user, pass } = parseUserPass(userinfo);
+
+        // v2rayN style: socks://BASE64(user:pass)@host:port
+        if (user && !pass) {
+            const decoded = decodeBase64Content(user);
+            const idx = decoded.indexOf(':');
+            if (idx !== -1) {
+                user = decoded.substring(0, idx);
+                pass = decoded.substring(idx + 1);
+            }
+        }
+
+        return { address: hp.host, port: hp.port, user, pass };
+    }
+
+    // Provider style: socks5://host:port:user:pass (username may contain spaces)
+    let host = '';
+    let port = null;
+    let remainder = '';
+    const t = authority.trim();
+
+    if (t.startsWith('[')) {
+        const close = t.indexOf(']');
+        if (close < 0) return null;
+        host = t.slice(1, close).trim();
+        let after = t.slice(close + 1);
+        if (after.startsWith(':')) after = after.slice(1);
+        if (!after) return { address: host, port: 1080, user: '', pass: '' };
+        const mm = after.match(/^(\d{1,5})(?::(.*))?$/);
+        if (!mm) return null;
+        port = Number(mm[1]);
+        remainder = mm[2] || '';
+    } else {
+        const firstColon = t.indexOf(':');
+        if (firstColon < 0) return { address: t, port: 1080, user: '', pass: '' };
+        host = t.slice(0, firstColon).trim();
+        const after = t.slice(firstColon + 1);
+        const mm = after.match(/^(\d{1,5})(?::(.*))?$/);
+        if (!mm) return null;
+        port = Number(mm[1]);
+        remainder = mm[2] || '';
+    }
+
+    if (!host || !Number.isFinite(port) || port <= 0 || port > 65535) return null;
+
+    if (!remainder) return { address: host, port, user: '', pass: '' };
+    const lastColon = remainder.lastIndexOf(':');
+    const userRaw = lastColon >= 0 ? remainder.slice(0, lastColon).trim() : remainder.trim();
+    let passRaw = lastColon >= 0 ? remainder.slice(lastColon + 1).trim() : '';
+    if (passRaw) passRaw = passRaw.split(/\s+/)[0];
+    return { address: host, port, user: safeDecodeUrlComponent(userRaw), pass: safeDecodeUrlComponent(passRaw) };
+}
+
 function getProxyRemark(link) {
     if (!link) return '';
     link = link.trim();
@@ -75,7 +186,6 @@ function parseProxyLink(link, tag) {
                 outbound.streamSettings.tlsSettings = {
                     serverName: vmess.sni || vmess.host,
                     fingerprint: "chrome",
-                    allowInsecure: true,
                     alpn: vmess.alpn ? vmess.alpn.split(',') : undefined
                 };
             }
@@ -123,7 +233,6 @@ function parseProxyLink(link, tag) {
                 outbound.streamSettings.tlsSettings = {
                     serverName: params.get("sni") || params.get("host") || urlObj.hostname,
                     fingerprint: params.get("fp") || "chrome",
-                    allowInsecure: true,
                     alpn: params.get("alpn") ? params.get("alpn").split(',') : undefined
                 };
             } else if (security === 'reality') {
@@ -148,7 +257,7 @@ function parseProxyLink(link, tag) {
             outbound.streamSettings = {
                 network: type,
                 security: params.get("security") || "tls",
-                tlsSettings: { serverName: params.get("sni") || urlObj.hostname, fingerprint: "chrome", allowInsecure: true },
+                tlsSettings: { serverName: params.get("sni") || urlObj.hostname, fingerprint: "chrome" },
                 wsSettings: type === 'ws' ? { path: params.get("path"), headers: { Host: params.get("host") } } : undefined,
                 grpcSettings: type === 'grpc' ? { serviceName: params.get("serviceName") } : undefined
             };
@@ -237,33 +346,19 @@ function parseProxyLink(link, tag) {
             // Support:
             // 1) Standard: socks5://user:pass@host:port
             // 2) v2rayN:  socks://BASE64(user:pass)@host:port#remark
-            // 3) No auth: socks5://host:port
-            let urlObj;
-            try {
-                // `normalizeProxyInputRaw` should ensure a canonical URL; still guard URL parsing here.
-                urlObj = new URL(link);
-            } catch (e) {
-                // Fallback: try normalizing again (handles curl-like snippets, weird auth order, etc.)
-                const maybe = normalizeProxyInputRaw(link);
-                const candidate = maybe && String(maybe).includes('://') ? maybe : `socks5://${String(maybe || '').trim()}`;
-                urlObj = new URL(candidate);
+            // 3) Provider: socks5://host:port:user(with space):pass
+            // 4) No auth: socks5://host:port
+            const parsed = tryParseSocksProxyLoose(link);
+            if (!parsed) {
+                const err = new Error('Invalid socks proxy URL');
+                err.code = 'PROXY_SOCKS_URL_INVALID';
+                throw err;
             }
 
-            const address = urlObj.hostname;
-            const port = (urlObj.port && Number.isFinite(parseInt(urlObj.port))) ? parseInt(urlObj.port) : 1080;
-
-            let username = safeDecodeUrlComponent(urlObj.username);
-            let password = safeDecodeUrlComponent(urlObj.password);
-
-            // v2rayN style: socks://BASE64(user:pass)@host:port
-            if (username && !password) {
-                const decoded = decodeBase64Content(username);
-                const idx = decoded.indexOf(':');
-                if (idx !== -1) {
-                    username = decoded.substring(0, idx);
-                    password = decoded.substring(idx + 1);
-                }
-            }
+            const address = parsed.address;
+            const port = Number.isFinite(parsed.port) ? parsed.port : 1080;
+            const username = parsed.user || '';
+            const password = parsed.pass || '';
 
             outbound.settings = {
                 servers: [{
@@ -312,7 +407,7 @@ function parseProxyLink(link, tag) {
                 outbound.streamSettings = {
                     network: 'tcp',
                     security: 'tls',
-                    tlsSettings: { serverName: urlObj.hostname, fingerprint: "chrome", allowInsecure: true },
+                    tlsSettings: { serverName: urlObj.hostname, fingerprint: "chrome" },
                 };
             }
         } else { throw new Error("Unsupported protocol"); }

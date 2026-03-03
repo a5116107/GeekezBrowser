@@ -1,0 +1,106 @@
+name: Cookie API Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Target API base URL"
+        required: false
+        default: "http://localhost:12138"
+      profile_id_or_name:
+        description: "Profile id or name used in smoke tests"
+        required: false
+        default: ""
+      site:
+        description: "Cookie site scope"
+        required: false
+        default: "example.com"
+      run_newman:
+        description: "Also run Newman collection"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies (skip postinstall side effects)
+        run: npm ci --ignore-scripts
+
+      - name: Validate cookie API assets
+        run: npm run regression:cookie-manager
+
+  smoke-live:
+    needs: validate-assets
+    if: ${{ inputs.profile_id_or_name != '' && secrets.GEEKEZ_API_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GEEKEZ_API_BASE: ${{ inputs.base_url }}
+      GEEKEZ_API_TOKEN: ${{ secrets.GEEKEZ_API_TOKEN }}
+      GEEKEZ_PROFILE: ${{ inputs.profile_id_or_name }}
+      GEEKEZ_COOKIE_SITE: ${{ inputs.site }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies (skip postinstall side effects)
+        run: npm ci --ignore-scripts
+
+      - name: Run Node smoke
+        run: npm run smoke:cookie-api
+
+      - name: Run Newman smoke
+        if: ${{ inputs.run_newman }}
+        run: npm run smoke:cookie-api:newman
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Cookie API Smoke"
+            echo ""
+            echo "- base: \`${GEEKEZ_API_BASE}\`"
+            echo "- profile: \`${GEEKEZ_PROFILE}\`"
+            echo "- site: \`${GEEKEZ_COOKIE_SITE}\`"
+            echo "- newman: \`${{ inputs.run_newman }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  smoke-skipped:
+    needs: validate-assets
+    if: ${{ inputs.profile_id_or_name == '' || secrets.GEEKEZ_API_TOKEN == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain skip
+        shell: bash
+        run: |
+          {
+            echo "## Cookie API Smoke Skipped"
+            echo ""
+            echo "Live smoke is skipped because required runtime inputs are missing."
+            echo "- required input: \`profile_id_or_name\`"
+            echo "- required secret: \`GEEKEZ_API_TOKEN\`"
+            echo ""
+            echo "You can still validate artifacts via \`regression:cookie-manager\`."
+          } >> "$GITHUB_STEP_SUMMARY"

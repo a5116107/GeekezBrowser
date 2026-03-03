@@ -7,100 +7,111 @@
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-**A Stealthy Anti-Detect Browser for E-Commerce & Multi-Account Management.**
+**A stealthy anti-detect browser for e-commerce and multi-account management.**
 
-[🇨🇳 中文说明 (Chinese)](docs/README_zh.md) | [📥 Download](https://github.com/EchoHS/GeekezBrowser/releases)
+[中文说明](docs/README_zh.md) | [Download](https://github.com/EchoHS/GeekezBrowser/releases)
 
 </div>
 
 ---
 
-## 📖 Introduction
+## Introduction
 
-**GeekEZ Browser** is a professional anti-detect browser built on **Electron** and **Puppeteer**, integrated with the powerful **Xray-core**. 
+**GeekEZ Browser** is built on **Electron** and **Puppeteer**, with **Xray-core** integrated for proxy and routing capabilities.
 
-It is designed to help e-commerce operators (Amazon, TikTok, Facebook, Shopee, etc.) manage multiple accounts safely by strictly isolating browser fingerprints, network environments, and local storage. It bypasses advanced detectors like Cloudflare, Pixelscan and BrowserScan.
+It is designed for operators who need multi-account isolation across platforms such as Amazon, TikTok, Facebook, and Shopee. The project focuses on profile isolation, proxy consistency, and workflow automation.
 
-## 📸 Screenshots
+## Screenshots
 
 <div align="center">
 
-<img src="docs/Main Interface1.png" alt="Main Interface1" width="800">
+<img src="docs/Main Interface1.png" alt="Main Interface 1" width="800">
+<img src="docs/Main Interface2.png" alt="Main Interface 2" width="800">
 
-<img src="docs/Main Interface2.png" alt="Main Interface2" width="800">
-
-*Main Interface - Profile Management*
+*Main interface - profile management*
 
 </div>
 
-## ✨ Key Features
+## Key Features
 
-### 🛡️ Advanced Fingerprint Isolation
-*   **Hardware Randomization**: Randomizes **CPU Cores** (4/8/12/16) and **Device Memory** (4/8/16 GB) for each profile, significantly increasing fingerprint uniqueness.
-*   **Timezone & Geo Spoofing**: 
-    - **Auto (No Change)** mode: Automatically matches the time zone and latitude and longitude of the proxy IP location.
-    - Geolocation spoofing with 50+ cities worldwide
-*   **Language Spoofing**: 
-    - 60+ languages covering all regions
-    - Full browser language, HTTP headers, and internationalization API modification
-*   **WebRTC Protection**: Forces `disable_non_proxied_udp` policy to prevent real IP leaks.
+### Fingerprint Isolation
+- Hardware randomization for CPU cores and memory per profile.
+- Timezone and geolocation controls with auto-match mode.
+- Language spoofing support with browser and header alignment.
+- WebRTC leak protection via proxy-safe policy.
 
-### 🔗 Powerful Network Engine (Xray-core)
-*   **Full Protocol Support**: VMess, VLESS, Trojan, Shadowsocks (including **2022**), Socks5, HTTP.
-*   **Advanced Transports**: Support for **REALITY**, **XHTTP**, **gRPC**, **mKCP**, WebSocket, H2.
-*   **Proxy Chain (Pre-Proxy)**: `[Local] -> [Pre-Proxy] -> [Target Node] -> [Web]`. Hides your real IP from the proxy provider.
-*   **Smart Routing**: Automatic IPv4/IPv6 dual-stack handling.
+### Network Engine (Xray-core)
+- Protocols: VMess, VLESS, Trojan, Shadowsocks, Socks5, HTTP.
+- Advanced transport support: REALITY, XHTTP, gRPC, mKCP, WebSocket, H2.
+- Pre-proxy chain mode: local -> pre-proxy -> target node -> web.
+- IPv4/IPv6 routing compatibility.
 
-### 🧩 Workflow & Management
-*   **Extension Support**: Import unpacked Chrome extensions (e.g., MetaMask, AdBlock) into isolated environments.
-*   **Tag System**: Organize profiles with custom color tags (e.g., "TikTok", "USA", "Main Account").
-*   **Safe Identification**: Uses **Dynamic Watermark** to display profile names (e.g., `Profile-1`) at the top of the page. 
-*   **Multi-Opening**: Running multiple profiles simultaneously with independent ports and processes.
-*   **REST API Server** (Advanced): Optional local HTTP API for external profile management (`/api/*`). Auth via `X-GeekEZ-API-Token` (Settings → Developer Features → API). Example: `curl -H "X-GeekEZ-API-Token: <token>" http://localhost:12138/api/status`
-*   **Remote Debugging Port** (Advanced): Optional external Puppeteer/DevTools connection for automation.
+### Workflow and Management
+- Chrome extension import for isolated profiles.
+- Tag-based profile organization.
+- Dynamic watermark for profile identification.
+- Multi-profile parallel launch with isolated ports/processes.
+- Optional local REST API (`/api/*`) for automation.
 
-## 🚀 Quick Start
+## Cookie API (Advanced)
+
+Authentication header:
+
+- `X-GeekEZ-API-Token`
+
+Core endpoints:
+
+- `GET /api/profiles/:idOrName/cookies/sites`
+- `GET /api/profiles/:idOrName/cookies?site=example.com`
+- `POST /api/profiles/:idOrName/cookies`
+- `POST /api/profiles/:idOrName/cookies/delete`
+- `POST /api/profiles/:idOrName/cookies/clear`
+- `GET /api/profiles/:idOrName/cookies/export?site=example.com`
+- `POST /api/profiles/:idOrName/cookies/import` (`mode=merge|replace`)
+
+References:
+
+- Examples: `docs/API_COOKIE_EXAMPLES.md`
+- Postman collection: `docs/postman/GeekEZ_Cookie_API.postman_collection.json`
+- Postman env template: `docs/postman/GeekEZ_Local.postman_environment.json`
+- Postman guide: `docs/postman/README.md`
+- Smoke commands: `npm run smoke:cookie-api`, `npm run smoke:cookie-api:newman`
+
+## Subscription URL Safety Policy
+
+By default, subscription fetch blocks `localhost` and private-network targets, and validates redirect chains.
+
+If you need internal subscription sources, configure explicit allowlist entries in:
+
+- Settings -> Developer Features -> `subscriptionPrivateAllowlist`
+- Examples: `127.0.0.1`, `*.localhost`, `intranet.example.com`
+
+## Quick Start
 
 ### Option 1: Download Release (Recommended)
-Go to the [**Releases**](https://github.com/EchoHS/GeekezBrowser/releases) page and download the installer for your platform:
-*   **Windows**: `GeekEZ Browser-{version}-win-x64.exe`
-*   **macOS (ARM64)**: `GeekEZ Browser-{version}-mac-arm64.dmg`
-*   **macOS (Intel)**: `GeekEZ Browser-{version}-mac-x64.dmg`
-*   **Linux**: `GeekEZ Browser-{version}-linux-x64.AppImage`
+
+Download installers from [Releases](https://github.com/EchoHS/GeekezBrowser/releases):
+
+- Windows: `GeekEZ Browser-{version}-win-x64.exe`
+- macOS ARM64: `GeekEZ Browser-{version}-mac-arm64.dmg`
+- macOS Intel: `GeekEZ Browser-{version}-mac-x64.dmg`
+- Linux: `GeekEZ Browser-{version}-linux-x64.AppImage`
 
 ### Option 2: Run from Source
 
-**Prerequisites**: Node.js (v16+) and Git.
+Prerequisites:
 
-1.  **Clone the repository**
-    ```bash
-    git clone https://github.com/EchoHS/GeekezBrowser.git
-    cd GeekezBrowser
-    ```
+- Node.js (v16+)
+- Git
 
-2.  **Install Dependencies**
-    ```bash
-    npm install
-    ```
+```bash
+git clone https://github.com/EchoHS/GeekezBrowser.git
+cd GeekezBrowser
+npm install
+npm start
+```
 
-3.  **Run the App**
-    ```bash
-    npm start
-    ```
-
-## 🛠 Compatibility Guide
-
-| Platform | Rating | Notes |
-| :--- | :--- | :--- |
-| **TikTok** | ✅ Safe | Canvas noise effectively prevents device association. Requires **Dedicated IP**. |
-| **Facebook** | ✅ Safe | Automation flags (WebDriver) stripped. Avoid high-frequency automation. |
-| **Shopee** | ✅ Safe | Stable fingerprint for seller center. Use fixed environment per account. |
-| **Amazon (Buyer)** | ✅ Safe | Sufficient isolation for buyer/reviewer accounts. |
-| **Amazon (Seller)** | ✅ Safe | **TLS Safe**. Usable for main accounts with **Dedicated IP** and fixed environment. |
-
-## 📦 Build
-
-To create an executable for your platform:
+## Build
 
 ```bash
 # Windows
@@ -113,33 +124,7 @@ npm run build:mac
 npm run build:linux
 ```
 
-## 🔍 Detection Status
-
-- ✅ **Browserscan**: All tests passed
-- ✅ **Pixelscan**: All tests passed
-- ✅ **Cloudflare**: Bot test passed
-
-## ❓ FAQ
-
-### macOS: "App is damaged" or "Cannot be opened"
-
-**Solution**:
-1. Drag `GeekEZ Browser` into your **Applications** folder.
-2. Open Terminal and run the following command (enter password if prompted):
-   ```bash
-   sudo xattr -rd com.apple.quarantine /Applications/GeekEZ\ Browser.app
-   ```
-3. Re-open the app.
-
-## ⚠️ Important Notes
-
-1. **Timezone Settings**: Use "Auto (No Change)" when logging into AWS, Oracle, or other sensitive websites to avoid white screen issues.
-2. **Geolocation**: Always select a city that matches your proxy IP location to avoid account bans.
-3. **Remote Debugging**: Only enable when you need external control via Puppeteer/DevTools. Keep it disabled for daily use.
-
-## ✅ Regression (No GUI)
-
-Run lightweight regressions without launching Electron:
+## Regression (No GUI)
 
 ```bash
 npm run regression:ipc
@@ -147,17 +132,37 @@ npm run regression:i18n
 npm run regression:all
 ```
 
-## 📝 License
+## Compatibility Notes
+
+The project emphasizes profile isolation + stable dedicated IP workflow. For high-risk platforms/accounts, use fixed environment parameters and avoid high-frequency automation patterns.
+
+## FAQ
+
+### macOS: "App is damaged" or "Cannot be opened"
+
+1. Move `GeekEZ Browser` to **Applications**.
+2. Run:
+
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/GeekEZ\ Browser.app
+```
+
+3. Re-open the app.
+
+## Important Notes
+
+1. For sensitive websites, prefer timezone auto-match mode.
+2. Keep geolocation aligned with proxy exit location.
+3. Enable remote debugging only when external automation is required.
+
+## Disclaimer
+
+This project is provided for educational and research purposes only. Users are responsible for complying with platform terms and applicable laws.
+
+## License
 
 This project is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
-## ⚠️ Disclaimer
+## Community
 
-This tool is provided for educational and research purposes only. The developers are not responsible for any account bans or legal issues resulting from the use of this software. Please comply with the terms of service of the platforms you use.
-
-## 📝 License
-
-This project is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/).
-
-## 💬 Community
-[*QQ Group：1079216892*](tencent://groupwpa/?subcmd=all&uin=1079216892)
+- QQ Group: `1079216892`

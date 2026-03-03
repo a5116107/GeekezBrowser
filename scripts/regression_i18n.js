@@ -8,10 +8,19 @@ function readText(p) {
 
 function extractTKeys(jsText) {
   const keys = new Set();
-  // Very lightweight regex: t('key') or t("key")
-  const re = /\bt\(\s*['"]([^'"]+)['"]\s*\)/g;
-  let m;
-  while ((m = re.exec(jsText))) keys.add(m[1]);
+  // Lightweight regexes for common helpers:
+  // - t('key')
+  // - tText('key', ...)
+  // - tFormat('key', ...)
+  const res = [
+    /\bt\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\btText\(\s*['"]([^'"]+)['"]/g,
+    /\btFormat\(\s*['"]([^'"]+)['"]/g,
+  ];
+  for (const re of res) {
+    let m;
+    while ((m = re.exec(jsText))) keys.add(m[1]);
+  }
   return keys;
 }
 
@@ -32,17 +41,34 @@ function extractZhKeys(zhText) {
   return keys;
 }
 
+function extractHtmlI18nKeys(indexHtmlText) {
+  const keys = new Set();
+  const res = [
+    /data-i18n\s*=\s*"([^"]+)"/g,
+    /data-i18n-placeholder\s*=\s*"([^"]+)"/g,
+  ];
+  for (const re of res) {
+    let m;
+    while ((m = re.exec(indexHtmlText))) keys.add(m[1]);
+  }
+  return keys;
+}
+
 function main() {
   const root = process.cwd();
   const rendererPath = path.join(root, 'renderer.js');
+  const indexPath = path.join(root, 'index.html');
   const i18nPath = path.join(root, 'i18n.js');
   const zhPath = path.join(root, 'locales', 'zh-CN.js');
 
   const renderer = readText(rendererPath);
+  const indexHtml = readText(indexPath);
   const i18n = readText(i18nPath);
   const zh = readText(zhPath);
 
   const used = extractTKeys(renderer);
+  const htmlUsed = extractHtmlI18nKeys(indexHtml);
+  for (const k of htmlUsed) used.add(k);
   const enKeys = extractEnKeys(i18n);
   const zhKeys = extractZhKeys(zh);
 
@@ -60,7 +86,7 @@ function main() {
     process.exit(1);
   }
 
-  console.log('[ok] i18n keys present for renderer t() usage:', used.size);
+  console.log('[ok] i18n keys present:', used.size);
 }
 
 main();

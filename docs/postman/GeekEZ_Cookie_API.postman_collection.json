@@ -1,0 +1,355 @@
+{
+  "info": {
+    "_postman_id": "8d5f9d76-6d4f-4f64-a43b-5af17f22f20c",
+    "name": "GeekEZ Cookie API",
+    "description": "Cookie management APIs for GeekEZ Browser local REST server.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:12138",
+      "type": "string"
+    },
+    {
+      "key": "apiToken",
+      "value": "replace-with-your-token",
+      "type": "string"
+    },
+    {
+      "key": "profileIdOrName",
+      "value": "your-profile-id-or-name",
+      "type": "string"
+    },
+    {
+      "key": "site",
+      "value": "example.com",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Cookie Sites Summary",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies/sites",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies",
+            "sites"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Cookies (All)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Cookies (By Site)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies?site={{site}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies"
+          ],
+          "query": [
+            {
+              "key": "site",
+              "value": "{{site}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Set Cookie (Create/Update)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"site\": \"{{site}}\",\n  \"cookie\": {\n    \"name\": \"session_id\",\n    \"value\": \"abc123\",\n    \"domain\": \".example.com\",\n    \"path\": \"/\",\n    \"secure\": true,\n    \"httpOnly\": true,\n    \"sameSite\": \"Lax\",\n    \"session\": true\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Delete Cookie (Single)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"site\": \"{{site}}\",\n  \"cookie\": {\n    \"name\": \"session_id\",\n    \"domain\": \".example.com\",\n    \"path\": \"/\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies/delete",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies",
+            "delete"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Clear Cookies (By Site)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"site\": \"{{site}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies/clear",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies",
+            "clear"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Clear Cookies (All)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies/clear",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies",
+            "clear"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Export Cookies",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies/export?site={{site}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies",
+            "export"
+          ],
+          "query": [
+            {
+              "key": "site",
+              "value": "{{site}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Import Cookies (Merge)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"site\": \"{{site}}\",\n  \"mode\": \"merge\",\n  \"content\": {\n    \"cookies\": [\n      {\n        \"name\": \"session_id\",\n        \"value\": \"new-value\",\n        \"domain\": \".example.com\",\n        \"path\": \"/\",\n        \"secure\": true,\n        \"httpOnly\": true,\n        \"session\": true\n      }\n    ]\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies/import",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies",
+            "import"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Import Cookies (Replace)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "X-GeekEZ-API-Token",
+            "value": "{{apiToken}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"site\": \"{{site}}\",\n  \"mode\": \"replace\",\n  \"content\": {\n    \"cookies\": [\n      {\n        \"name\": \"session_id\",\n        \"value\": \"replace-value\",\n        \"domain\": \".example.com\",\n        \"path\": \"/\",\n        \"secure\": true,\n        \"httpOnly\": true,\n        \"session\": true\n      }\n    ]\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/profiles/{{profileIdOrName}}/cookies/import",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "profiles",
+            "{{profileIdOrName}}",
+            "cookies",
+            "import"
+          ]
+        }
+      }
+    }
+  ]
+}

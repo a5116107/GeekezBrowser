@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 
 <head>
@@ -7,974 +7,7 @@
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; require-trusted-types-for 'script'">
     <meta name="referrer" content="no-referrer">
     <title>GeekEZ Browser</title>
-    <style>
-        :root {
-            --transition-speed: 0.3s;
-            --row-height: 24px;
-        }
-
-        [data-theme="geek"] {
-            --bg-color: #1e1e2d;
-            --card-bg: #2b2b40;
-            --text-primary: #ffffff;
-            --text-secondary: #a0a0ba;
-            --accent: #00e0ff;
-            --danger: #f64e60;
-            --border: #3f4254;
-            --splash-bg: #000000;
-            --splash-color: #00e0ff;
-            --input-bg: #181824;
-            --toast-bg: rgba(0, 0, 0, 0.78);
-            --toast-text: #ffffff;
-        }
-
-        [data-theme="light"] {
-            --bg-color: #f0f2f5;
-            --card-bg: #ffffff;
-            --text-primary: #2c3e50;
-            --text-secondary: #7f8c8d;
-            --accent: #d63031;
-            --danger: #e17055;
-            --border: #dfe6e9;
-            --splash-bg: #fff;
-            --splash-color: #d63031;
-            --input-bg: #f9f9f9;
-            --toast-bg: rgba(0, 0, 0, 0.78);
-            --toast-text: #ffffff;
-        }
-
-        [data-theme="dark"] {
-            --bg-color: #121212;
-            --card-bg: #1e1e1e;
-            --text-primary: #e0e0e0;
-            --text-secondary: #757575;
-            --accent: #66bb6a;
-            --danger: #ef5350;
-            --border: #333333;
-            --splash-bg: #121212;
-            --splash-color: #66bb6a;
-            --input-bg: #2c2c2c;
-            --toast-bg: rgba(0, 0, 0, 0.78);
-            --toast-text: #ffffff;
-        }
-
-        body {
-            font-family: 'Segoe UI', 'Roboto Mono', monospace;
-            padding: 20px;
-            background: var(--bg-color);
-            color: var(--text-primary);
-            margin: 0;
-            overflow: hidden;
-            transition: background var(--transition-speed);
-            padding-top: 40px !important;
-            -webkit-app-region: drag;
-        }
-
-        button,
-        input,
-        textarea,
-        select,
-        .icon-btn,
-        .profile-item,
-        .modal-content,
-        .lang-btn,
-        .logo {
-            -webkit-app-region: no-drag;
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            margin-top: 0;
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 0;
-            font-family: 'Courier New', monospace;
-            transform: skewX(-10deg);
-            cursor: default;
-            user-select: none;
-        }
-
-        .logo-svg {
-            height: 28px;
-            width: auto;
-            margin-right: -4px;
-            position: relative;
-            top: -2px;
-        }
-
-        .logo-text {
-            font-size: 24px;
-            font-weight: bold;
-            color: var(--text-primary);
-            letter-spacing: -1px;
-            display: flex;
-            align-items: baseline;
-        }
-
-        .logo-text span.highlight {
-            color: var(--accent);
-            text-shadow: 0 0 5px var(--accent);
-            margin-left: 1px;
-        }
-
-        .logo-text span.ver {
-            font-size: 12px;
-            opacity: 0.6;
-            font-weight: normal;
-            margin-left: 6px;
-            transform: skewX(10deg);
-        }
-
-        .running-badge {
-            display: none;
-            font-size: 10px;
-            font-weight: bold;
-            color: #27ae60;
-            border: 1px solid #27ae60;
-            background: rgba(39, 174, 96, 0.1);
-            padding: 2px 6px;
-            border-radius: 4px;
-            margin-left: 10px;
-            text-transform: uppercase;
-            animation: badgePulse 2s infinite;
-            vertical-align: middle;
-        }
-
-        .running-badge.active {
-            display: inline-block;
-        }
-
-        @keyframes badgePulse {
-            50% {
-                opacity: 1;
-                box-shadow: 0 0 5px rgba(39, 174, 96, 0.5);
-            }
-        }
-
-        input,
-        textarea,
-        select {
-            background: var(--input-bg);
-            border: 1px solid var(--border);
-            color: var(--text-primary);
-            padding: 8px;
-            border-radius: 4px;
-            width: 100%;
-            box-sizing: border-box;
-            margin-bottom: 10px;
-            font-family: monospace;
-            font-size: 12px;
-        }
-
-        input:focus,
-        textarea:focus,
-        select:focus {
-            border-color: var(--accent);
-            outline: none;
-        }
-
-        button {
-            padding: 0 12px;
-            height: 30px;
-            cursor: pointer;
-            background: var(--accent);
-            color: var(--bg-color);
-            border: none;
-            border-radius: 4px;
-            font-weight: bold;
-            transition: 0.2s;
-            text-transform: uppercase;
-            font-family: monospace;
-            font-size: 12px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        button:hover {
-            filter: brightness(1.1);
-        }
-
-        button.outline {
-            background: transparent;
-            border: 1px solid var(--accent);
-            color: var(--accent);
-        }
-
-        button.outline:hover {
-            background: rgba(128, 128, 128, 0.1);
-        }
-
-        button.danger {
-            background: transparent;
-            border: 1px solid var(--danger);
-            color: var(--danger);
-        }
-
-        button.danger:hover {
-            background: var(--danger);
-            color: #fff;
-        }
-
-        .top-actions {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            height: 24px;
-        }
-
-        .theme-select {
-            height: 100%;
-            padding: 0 8px;
-            line-height: 22px;
-            margin: 0;
-            background: var(--bg-color);
-            border: 1px solid var(--accent);
-            color: var(--accent);
-            font-size: 12px;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        .icon-btn {
-            cursor: pointer;
-            color: var(--text-secondary);
-            width: 24px;
-            height: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: 0.2s;
-        }
-
-        .icon-btn:hover {
-            color: var(--accent);
-        }
-
-        .lang-btn {
-            cursor: pointer;
-            font-size: 12px;
-            border: 1px solid var(--accent);
-            color: var(--accent);
-            padding: 0 6px;
-            border-radius: 4px;
-            height: 24px;
-            line-height: 22px;
-            box-sizing: border-box;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            -webkit-app-region: no-drag;
-        }
-
-        .toolbar {
-            background: var(--card-bg);
-            padding: 10px 15px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 10px;
-            border-left: 4px solid var(--accent);
-        }
-
-        .status-badge {
-            font-size: 12px;
-            border: 1px solid var(--accent);
-            color: var(--accent);
-            padding: 2px 8px;
-            border-radius: 4px;
-        }
-
-        .sub-toolbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            padding: 0 5px;
-        }
-
-        .sub-left {
-            display: flex;
-            gap: 10px;
-        }
-
-        .sub-right {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-
-        .search-box {
-            background: var(--input-bg);
-            border: 1px solid var(--border);
-            color: var(--text-primary);
-            padding: 4px 10px;
-            border-radius: 15px;
-            width: 220px;
-            font-size: 12px;
-            margin: 0;
-            transition: width 0.3s;
-        }
-
-        .search-box:focus {
-            border-color: var(--accent);
-            outline: none;
-            width: 260px;
-        }
-
-        .layout {
-            display: flex;
-            gap: 15px;
-            height: calc(100vh - 200px);
-        }
-
-        .main-list {
-            flex: 1;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            padding-right: 5px;
-        }
-
-        .empty-state {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            min-height: 300px;
-            color: var(--text-secondary);
-            opacity: 0.6;
-            text-align: center;
-            grid-column: 1 / -1;
-        }
-
-        .empty-state svg {
-            width: 80px;
-            height: 80px;
-            margin-bottom: 20px;
-            color: var(--accent);
-            opacity: 0.5;
-        }
-
-        .empty-state-text {
-            font-size: 24px;
-            font-weight: bold;
-            letter-spacing: 1px;
-        }
-
-        .main-list.grid-view {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-            grid-auto-rows: min-content;
-            align-content: start;
-            gap: 10px;
-        }
-
-        .card {
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-        }
-
-        .profile-item {
-            background: var(--card-bg);
-            padding: 10px 15px;
-            border-radius: 6px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border: 1px solid var(--border);
-            transition: 0.2s;
-            position: relative;
-            overflow: hidden;
-            flex-shrink: 0;
-        }
-
-        .profile-item:hover {
-            border-color: var(--accent);
-            transform: translateX(2px);
-        }
-
-        .profile-info h4 {
-            margin: 0 0 5px 0;
-            font-size: 15px;
-            color: var(--text-primary);
-        }
-
-        .profile-meta {
-            font-size: 11px;
-            color: var(--text-secondary);
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-
-        .tag {
-            background: var(--bg-color);
-            padding: 2px 6px;
-            border-radius: 4px;
-            border: 1px solid var(--border);
-        }
-
-        .quick-switch-select {
-            background: transparent;
-            border: none;
-            color: var(--accent);
-            font-size: 11px;
-            width: auto;
-            cursor: pointer;
-            font-weight: bold;
-            padding: 0;
-            margin: 0;
-        }
-
-        .quick-switch-select option {
-            background: var(--card-bg);
-            color: var(--text-primary);
-        }
-
-        .actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .main-list.grid-view .profile-item {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 10px;
-            padding: 15px;
-        }
-
-        .main-list.grid-view .profile-item:hover {
-            transform: translateY(-3px);
-            border-color: var(--accent);
-        }
-
-        .main-list.grid-view .profile-info {
-            width: 100%;
-        }
-
-        .main-list.grid-view .profile-meta {
-            flex-wrap: wrap;
-            margin-top: 8px;
-            gap: 5px;
-        }
-
-        .main-list.grid-view .actions {
-            width: 100%;
-            justify-content: space-between;
-            margin-top: 5px;
-        }
-
-        .main-list.grid-view .actions button {
-            flex: 1;
-            padding: 0 5px;
-            font-size: 11px;
-        }
-
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            z-index: 1000;
-            backdrop-filter: blur(4px);
-            justify-content: center;
-            align-items: center;
-        }
-
-        .modal-content {
-            background: var(--bg-color);
-            width: 500px;
-            height: auto;
-            max-height: 90vh;
-            margin: 0;
-            padding: 20px;
-            border-radius: 8px;
-            border: 1px solid var(--accent);
-            display: flex;
-            flex-direction: column;
-            box-sizing: border-box;
-            overflow: hidden;
-        }
-
-        #proxyModal .modal-content {
-            width: 800px;
-            height: 85vh;
-        }
-
-        #helpModal .modal-content {
-            width: 500px;
-            height: 75vh;
-        }
-
-        #confirmModal .modal-content,
-        #alertModal .modal-content {
-            width: 350px;
-            text-align: center;
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            font-size: 16px;
-            font-weight: bold;
-            color: var(--accent);
-            padding-bottom: 10px;
-            margin-bottom: 10px;
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
-        }
-
-        .modal-body {
-            flex: 1;
-            overflow-y: auto;
-            padding-right: 5px;
-            min-height: 0;
-        }
-
-        .modal-footer {
-            margin-top: 15px;
-            text-align: right;
-            flex-shrink: 0;
-            border-top: 1px solid var(--border);
-            padding-top: 10px;
-        }
-
-        #preProxyList {
-            flex: 1;
-            overflow-y: auto;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 5px;
-            margin-bottom: 10px;
-            min-height: 0;
-        }
-
-        .proxy-row {
-            display: flex;
-            align-items: center;
-            padding: 0 10px;
-            border-bottom: 1px solid var(--border);
-            transition: 0.2s;
-            height: 40px;
-            box-sizing: border-box;
-        }
-
-        .proxy-row:hover {
-            background: rgba(128, 128, 128, 0.08);
-        }
-
-        .proxy-left {
-            display: flex;
-            align-items: center;
-            margin-right: 10px;
-            flex-shrink: 0;
-        }
-
-        .proxy-mid {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            min-width: 0;
-            margin-right: 10px;
-            height: 100%;
-        }
-
-        .proxy-header {
-            display: flex;
-            align-items: center;
-            width: 100%;
-        }
-
-        .proxy-proto {
-            font-size: 9px;
-            padding: 0 5px;
-            border-radius: 3px;
-            background: rgba(128, 128, 128, 0.2);
-            color: var(--text-primary);
-            font-weight: bold;
-            flex-shrink: 0;
-            margin-right: 8px;
-            height: 18px;
-            line-height: 18px;
-            display: inline-block;
-        }
-
-        .proxy-remark {
-            font-size: 13px;
-            font-weight: bold;
-            color: var(--text-primary);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            flex: 1;
-            margin-right: 8px;
-            display: flex;
-            align-items: center;
-            height: 100%;
-        }
-
-        .proxy-latency {
-            font-size: 10px;
-            font-weight: bold;
-            padding: 0 8px;
-            border-radius: 4px;
-            flex-shrink: 0;
-            min-width: 50px;
-            text-align: center;
-            height: var(--row-height);
-            box-sizing: border-box;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-left: 5px;
-            line-height: 1;
-            padding-top: 1px;
-        }
-
-        .proxy-right {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            flex-shrink: 0;
-            height: 100%;
-        }
-
-        .proxy-right button {
-            padding: 0 10px;
-            font-size: 10px;
-            min-width: 45px;
-            margin: 0;
-            height: var(--row-height);
-            box-sizing: border-box;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            line-height: 1;
-        }
-
-        #manualAddArea {
-            background: rgba(0, 0, 0, 0.05);
-            padding: 10px;
-            border-radius: 6px;
-            flex-shrink: 0;
-        }
-
-        .tab-header {
-            display: flex;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 10px;
-            overflow-x: auto;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        .tab-btn {
-            padding: 8px 15px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: bold;
-            color: var(--text-secondary);
-            border-bottom: 2px solid transparent;
-            transition: 0.2s;
-            display: inline-block;
-        }
-
-        .tab-btn:hover {
-            color: var(--text-primary);
-        }
-
-        .icon-btn:hover {
-            color: var(--text-primary);
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        /* Update notification badge */
-        .has-update {
-            position: relative;
-        }
-
-        .has-update::after {
-            content: '';
-            position: absolute;
-            top: 2px;
-            right: 2px;
-            width: 8px;
-            height: 8px;
-            background-color: var(--danger);
-            border-radius: 50%;
-            border: 2px solid var(--card-bg);
-        }
-
-        .tab-btn.active {
-            color: var(--accent);
-            border-bottom: 2px solid var(--accent);
-            background: rgba(255, 255, 255, 0.05);
-        }
-
-        .help-section {
-            display: none;
-        }
-
-        .help-section.active {
-            display: block;
-            animation: fadeIn 0.3s;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(5px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .export-option {
-            padding: 15px;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            transition: 0.2s;
-        }
-
-        .export-option:hover {
-            background: rgba(128, 128, 128, 0.1);
-            border-color: var(--accent);
-        }
-
-        .export-title {
-            font-weight: bold;
-            font-size: 14px;
-        }
-
-        .export-desc {
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
-
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--bg-color);
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--border);
-            border-radius: 3px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--accent);
-        }
-
-        #splash {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background-color: var(--splash-bg);
-            z-index: 9999;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background-image: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 255, 0, 0.02) 3px);
-        }
-
-        .glitch-wrapper {
-            position: relative;
-        }
-
-        .glitch-text {
-            font-size: 120px;
-            font-weight: 900;
-            text-transform: uppercase;
-            letter-spacing: 0px;
-            color: var(--splash-color);
-            font-family: 'Arial', sans-serif;
-            font-style: italic;
-            position: relative;
-            display: inline-block;
-        }
-
-        .glitch-text::before,
-        .glitch-text::after {
-            content: attr(data-text);
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: var(--splash-bg);
-        }
-
-        .glitch-text::before {
-            left: -4px;
-            text-shadow: 2px 0 #00fff9;
-            animation: glitch-anim-1 2.5s infinite reverse steps(2, end);
-        }
-
-        .glitch-text::after {
-            left: 4px;
-            text-shadow: -2px 0 #ff00c1;
-            animation: glitch-anim-2 2s infinite reverse steps(2, end);
-        }
-
-        @keyframes glitch-anim-1 {
-            0% {
-                clip-path: inset(50% 0 30% 0);
-                transform: translate(-5px, 0);
-            }
-
-            20% {
-                clip-path: inset(10% 0 60% 0);
-                transform: translate(5px, 0);
-            }
-
-            40% {
-                clip-path: inset(80% 0 5% 0);
-                transform: translate(-5px, 0);
-            }
-
-            60% {
-                clip-path: inset(10% 0 80% 0);
-                transform: translate(5px, 0);
-            }
-
-            80% {
-                clip-path: inset(40% 0 20% 0);
-                transform: translate(-5px, 0);
-            }
-
-            100% {
-                clip-path: inset(20% 0 50% 0);
-                transform: translate(0, 0);
-            }
-        }
-
-        @keyframes glitch-anim-2 {
-            0% {
-                clip-path: inset(10% 0 10% 0);
-                transform: translate(5px, 0);
-            }
-
-            30% {
-                clip-path: inset(20% 0 60% 0);
-                transform: translate(5px, 0);
-            }
-
-            60% {
-                clip-path: inset(10% 0 80% 0);
-                transform: translate(5px, 0);
-            }
-
-            90% {
-                clip-path: inset(30% 0 40% 0);
-                transform: translate(5px, 0);
-            }
-
-            100% {
-                clip-path: inset(0 0 0 0);
-                transform: translate(0, 0);
-            }
-        }
-
-        .settings-section {
-            display: none;
-        }
-
-        .settings-section.active {
-            display: block;
-        }
-
-        .ext-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px;
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 6px;
-            margin-bottom: 8px;
-        }
-
-        /* Custom timezone dropdown */
-        .timezone-wrapper {
-            position: relative;
-            width: 100%;
-            margin-bottom: 10px;
-        }
-
-        .timezone-dropdown {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            max-height: 200px;
-            overflow-y: auto;
-            background: var(--input-bg);
-            border: 1px solid var(--accent);
-            border-radius: 4px;
-            margin-top: 2px;
-            z-index: 1000;
-            display: none;
-        }
-
-        .timezone-dropdown.active {
-            display: block;
-        }
-
-        .timezone-item {
-            padding: 8px 12px;
-            cursor: pointer;
-            color: var(--text-primary);
-            font-size: 12px;
-            font-family: monospace;
-            transition: background 0.2s;
-        }
-
-        .timezone-item:hover,
-        .timezone-item.selected {
-            background: var(--accent);
-            color: var(--bg-color);
-        }
-
-        .timezone-item.hidden {
-            display: none;
-        }
-
-        .import-menu-item:hover {
-            background: rgba(128, 128, 128, 0.1);
-        }
-
-        .hover-bg:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 
 <body data-theme="geek">
@@ -984,107 +17,233 @@
         </div>
     </div>
 
-    <div class="header">
-        <div class="logo">
-            <svg class="logo-svg" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                    <linearGradient id="neon" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" style="stop-color:#00e0ff;stop-opacity:1" />
-                        <stop offset="100%" style="stop-color:#2980b9;stop-opacity:1" />
-                    </linearGradient>
-                </defs>
-                <path
-                    d="M256 100 H 120 A 20 20 0 0 0 100 120 V 392 A 20 20 0 0 0 120 412 H 392 A 20 20 0 0 0 412 392 V 256 H 256 V 320 H 330 V 332 H 180 V 180 H 330 V 100"
-                    fill="url(#neon)" />
-                <rect x="360" y="80" width="60" height="40" fill="#ff0055" opacity="0.8" />
-                <rect x="80" y="280" width="40" height="20" fill="#00e0ff" opacity="0.6" />
-                <rect x="400" y="400" width="30" height="30" fill="#00e0ff" />
-                <rect x="80" y="80" width="20" height="20" fill="#ff0055" />
-            </svg>
-            <div class="logo-text">eek<span class="highlight">EZ</span><span class="ver" id="app-version"></span></div>
-        </div>
-        <div class="top-actions">
-            <select class="theme-select" id="themeSelect">
-                <option value="geek">Geek</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-            </select>
-            <div class="icon-btn" data-action="open-github" title="Github"><svg viewBox="0 0 24 24" width="20" height="20"
-                    fill="currentColor">
+    <div class="app-shell">
+        <!-- ========== Sidebar ========== -->
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <svg class="logo-svg" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="neon" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" style="stop-color:#00e0ff;stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:#2980b9;stop-opacity:1" />
+                        </linearGradient>
+                    </defs>
                     <path
-                        d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                </svg></div>
-            <div class="icon-btn" data-action="open-help" title="Help"><svg viewBox="0 0 24 24" width="20" height="20"
-                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                    <circle cx="12" cy="17" r="0.5" fill="currentColor"></circle>
-                </svg></div>
-            <div class="icon-btn" data-action="open-settings" title="Settings"><svg viewBox="0 0 24 24" width="20"
-                    height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <path
-                        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z">
-                    </path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                </svg></div>
-            <div class="icon-btn" data-action="check-updates" title="Check Updates" id="btnUpdate"><svg viewBox="0 0 24 24"
-                    width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <path d="M16 12l-4-4-4 4"></path>
-                    <path d="M12 16V8"></path>
-                </svg></div>
-            <div class="lang-btn" data-action="toggle-lang">CN/EN</div>
-        </div>
-    </div>
+                        d="M256 100 H 120 A 20 20 0 0 0 100 120 V 392 A 20 20 0 0 0 120 412 H 392 A 20 20 0 0 0 412 392 V 256 H 256 V 320 H 330 V 332 H 180 V 180 H 330 V 100"
+                        fill="url(#neon)" />
+                    <rect x="360" y="80" width="60" height="40" fill="#ff0055" opacity="0.8" />
+                    <rect x="80" y="280" width="40" height="20" fill="#00e0ff" opacity="0.6" />
+                    <rect x="400" y="400" width="30" height="30" fill="#00e0ff" />
+                    <rect x="80" y="80" width="20" height="20" fill="#ff0055" />
+                </svg>
+                <div class="logo-text">eek<span class="highlight">EZ</span><span class="ver" id="app-version"></span></div>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="sidebar-item active" data-page="profiles" data-action="navigate" data-action-arg="profiles">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                    <span class="nav-label" data-i18n="navProfiles">Profiles</span>
+                </div>
+                <div class="sidebar-item" data-page="groups" data-action="navigate" data-action-arg="groups">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span class="nav-label" data-i18n="navGroups">Groups</span>
+                </div>
+                <div class="sidebar-item" data-page="proxies" data-action="navigate" data-action-arg="proxies">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <span class="nav-label" data-i18n="navProxies">Proxy Manager</span>
+                </div>
+                <div class="sidebar-item" data-page="apps" data-action="navigate" data-action-arg="apps">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="9" height="9" rx="2"/><rect x="13" y="2" width="9" height="9" rx="2"/><rect x="2" y="13" width="9" height="9" rx="2"/><rect x="13" y="13" width="9" height="9" rx="2"/></svg>
+                    <span class="nav-label" data-i18n="navApps">App Center</span>
+                </div>
+                <div class="sidebar-item" data-page="trash" data-action="navigate" data-action-arg="trash">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span class="nav-label" data-i18n="navTrash">Trash</span>
+                </div>
+            </nav>
+            <div class="sidebar-bottom">
+                <div class="sidebar-item" data-action="open-settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <span class="nav-label" data-i18n="settingsTitle">Settings</span>
+                </div>
+            </div>
+        </aside>
 
-    <div class="toolbar">
-        <div style="display:flex; gap:15px; align-items:center;">
-            <label style="font-size:13px; cursor:pointer; display:flex; align-items:center; gap:8px;"><input
-                    type="checkbox" id="enablePreProxy" style="width:auto; margin:0;"> <span
-                    data-i18n="enablePreProxy">Chain Proxy</span></label>
-            <span id="currentProxyDisplay" class="status-badge">OFF</span>
-            <button class="outline" data-action="open-proxy-manager" data-i18n="manageChain">⚙️ Proxy Chain</button>
-        </div>
-        <div style="display:flex; gap:10px;">
-            <button class="outline" data-action="open-export-modal" data-i18n="btnExport">📤 Export</button>
-            <div style="position: relative;">
-                <button class="outline" data-action="toggle-import-menu" id="importBtn" data-i18n="importYaml">📥 Import
-                    ▾</button>
-                <div id="importMenu"
-                    style="display: none; position: absolute; top: 35px; right: 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; min-width: 200px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
-                    <div class="import-menu-item" data-action="import-full-backup"
-                        style="padding: 10px 15px; cursor: pointer; font-size: 13px;">
-                        🔐 导入完整备份 (.geekez)
+        <!-- ========== Main Content ========== -->
+        <main class="main-content">
+            <!-- Top bar -->
+            <div class="topbar">
+                <div class="topbar-left">
+                    <span class="topbar-title" id="pageTitle" data-i18n="navProfiles">Profiles</span>
+                </div>
+                <div class="topbar-right">
+                    <select class="theme-select" id="themeSelect">
+                        <option value="geek">Geek</option>
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                    </select>
+                    <div class="icon-btn" data-action="open-github" title="Github"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg></div>
+                    <div class="icon-btn" data-action="open-help" title="Help"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg></div>
+                    <div class="icon-btn" data-action="check-updates" title="Check Updates" id="btnUpdate"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 12l-4-4-4 4"/><path d="M12 16V8"/></svg></div>
+                    <div class="lang-btn" id="langToggleBtn" data-action="toggle-lang" title="Switch Language" data-lang="cn">中文 · EN</div>
+                </div>
+            </div>
+
+            <!-- ===== Page: Profiles ===== -->
+            <div id="page-profiles" class="page">
+                <div class="profile-toolbar">
+                    <div class="profile-toolbar-left">
+                        <button data-action="open-add-modal" data-i18n="newProfile">+ New Profile</button>
+                        <button class="outline" data-action="batch-import-profiles" data-i18n="batchImport">Batch Import</button>
+                        <div class="profile-filters" id="profileQuickFilters">
+                            <button class="profile-filter-chip active" data-action="set-profile-filter" data-action-arg="all" aria-pressed="true"><span data-i18n="pfAll">All</span><span class="count" data-role="count">0</span></button>
+                            <button class="profile-filter-chip" data-action="set-profile-filter" data-action-arg="running" aria-pressed="false"><span data-i18n="pfRunning">Running</span><span class="count" data-role="count">0</span></button>
+                            <button class="profile-filter-chip" data-action="set-profile-filter" data-action-arg="attention" aria-pressed="false"><span data-i18n="pfAttention">Attention</span><span class="count" data-role="count">0</span></button>
+                            <button class="profile-filter-chip" data-action="set-profile-filter" data-action-arg="idle" aria-pressed="false"><span data-i18n="pfIdle">Idle</span><span class="count" data-role="count">0</span></button>
+                        </div>
                     </div>
-                    <div class="import-menu-item" data-action="import-data"
-                        style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px;">
-                        📄 导入 YAML 配置
+                    <div class="profile-toolbar-right">
+                        <label class="proxy-chain-toggle"><input type="checkbox" id="enablePreProxy"> <span data-i18n="enablePreProxy">Chain Proxy</span></label>
+                        <span id="currentProxyDisplay" class="status-badge" data-i18n="proxyChainOff">Off</span>
+                        <div class="search-shell">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.65" y1="16.65" x2="21" y2="21"/></svg>
+                            <input type="text" id="searchInput" class="search-box" placeholder="Search..." data-i18n-placeholder="searchProfilesPlaceholder">
+                        </div>
+                        <button class="outline" data-action="open-export-modal" data-i18n="btnExport">Export</button>
+                        <div class="import-menu-wrap">
+                            <button class="outline" data-action="toggle-import-menu" id="importBtn" data-i18n="importYaml">Import ▾</button>
+                            <div id="importMenu" class="import-menu">
+                                <div class="import-menu-item" data-action="import-full-backup" data-i18n="importFullBackup">Import Full Backup (.geekez)</div>
+                                <div class="import-menu-item" data-action="import-data" data-i18n="importYamlConfig">Import YAML Config</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="profile-table-wrap">
+                        <table class="profile-table">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" class="row-checkbox" id="selectAllProfiles"></th>
+                                    <th>#</th>
+                                    <th data-i18n="colName">Name / Tags</th>
+                                    <th data-i18n="colProxy">Proxy</th>
+                                    <th data-i18n="colEngine">Engine</th>
+                                    <th data-i18n="colStatus">Status</th>
+                                    <th data-i18n="colLastOpened">Last Opened</th>
+                                    <th data-i18n="colActions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="profileTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="profileListEmpty" style="display:none;"></div>
+                </div>
+            </div>
+
+            <!-- ===== Page: Groups ===== -->
+            <div id="page-groups" class="page hidden">
+                <div class="page-content">
+                    <h3 data-i18n="navGroups" style="margin-bottom:16px;">Groups</h3>
+                    <div class="group-list" id="groupList"></div>
+                </div>
+            </div>
+
+            <!-- ===== Page: Proxies ===== -->
+            <div id="page-proxies" class="page hidden">
+                <!-- Group Tabs Bar -->
+                <div class="proxy-page-group-bar">
+                    <div class="proxy-page-group-tabs" id="proxyPageGroupTabs"></div>
+                    <button class="outline" data-action="open-sub-edit-modal" data-action-arg="true" data-i18n="btnImportSub">+ Sub</button>
+                </div>
+
+                <!-- Toolbar -->
+                <div class="proxy-page-toolbar">
+                    <button data-action="proxy-page-add" data-i18n="add">+ Add</button>
+                    <button class="outline" data-action="test-current-group" data-i18n="btnTestGroup" id="proxyPageTestAllBtn">Test All</button>
+                    <div class="proxy-page-toolbar-sep"></div>
+                    <div class="profile-filters" id="proxyPageQuickFilters">
+                        <button class="profile-filter-chip active" data-action="set-proxy-page-filter" data-action-arg="all" aria-pressed="true">
+                            <span data-i18n="proxyQuickAll">All</span><span class="count" data-role="count" id="proxyPageCountAll">0</span>
+                        </button>
+                        <button class="profile-filter-chip" data-action="set-proxy-page-filter" data-action-arg="pass" aria-pressed="false">
+                            <span data-i18n="proxyQuickPass">Pass</span><span class="count" data-role="count" id="proxyPageCountPass">0</span>
+                        </button>
+                        <button class="profile-filter-chip" data-action="set-proxy-page-filter" data-action-arg="fail" aria-pressed="false">
+                            <span data-i18n="proxyQuickFail">Fail</span><span class="count" data-role="count" id="proxyPageCountFail">0</span>
+                        </button>
+                        <button class="profile-filter-chip" data-action="set-proxy-page-filter" data-action-arg="wait" aria-pressed="false">
+                            <span data-i18n="proxyQuickWait">Wait</span><span class="count" data-role="count" id="proxyPageCountWait">0</span>
+                        </button>
+                    </div>
+                    <div style="flex:1;"></div>
+                    <div class="search-shell">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="16.65" y1="16.65" x2="21" y2="21"/></svg>
+                        <input type="text" id="proxyPageSearchInput" class="search-box" placeholder="Search..." data-i18n-placeholder="proxySearchPlaceholder">
+                    </div>
+                    <select id="proxyPageSortBy" class="quick-switch-select no-drag" style="min-width:120px;">
+                        <option value="default" data-i18n="proxySortDefault">Sort: Default</option>
+                        <option value="latency_asc" data-i18n="proxySortLatencyAsc">Latency ↑</option>
+                        <option value="latency_desc" data-i18n="proxySortLatencyDesc">Latency ↓</option>
+                        <option value="fail_first" data-i18n="proxySortFailFirst">FAIL First</option>
+                        <option value="name_asc" data-i18n="proxySortNameAsc">Name A-Z</option>
+                    </select>
+                </div>
+
+                <!-- Collapsible Add/Edit Panel -->
+                <div id="proxyPageAddPanel" class="proxy-page-add-panel" style="display:none;">
+                    <div class="proxy-page-add-row">
+                        <input type="hidden" id="proxyPageEditId">
+                        <input type="text" id="proxyPageNewRemark" placeholder="Remark" spellcheck="false" data-i18n-placeholder="remark">
+                        <input type="text" id="proxyPageNewUrl" placeholder="vmess://, ss://..." spellcheck="false">
+                        <button data-action="proxy-page-save" data-i18n="add" id="proxyPageBtnSave">Add</button>
+                        <button class="outline" data-action="proxy-page-cancel-add" data-i18n="cancel">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Proxy Table -->
+                <div class="page-content">
+                    <div class="profile-table-wrap">
+                        <table class="profile-table proxy-page-table">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" class="row-checkbox" id="selectAllProxies"></th>
+                                    <th>#</th>
+                                    <th data-i18n="colName">Name</th>
+                                    <th>Protocol</th>
+                                    <th>Address</th>
+                                    <th data-i18n="colStatus">Status</th>
+                                    <th>Latency</th>
+                                    <th data-i18n="colActions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="proxyPageTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="proxyPageListEmpty" class="proxy-page-empty" style="display:none;"></div>
+                </div>
+            </div>
+
+            <!-- ===== Page: Apps ===== -->
+            <div id="page-apps" class="page hidden">
+                <div class="page-content">
+                    <h3 data-i18n="navApps" style="margin-bottom:16px;">App Center</h3>
+                    <div class="app-grid" id="appGrid"></div>
+                </div>
+            </div>
+
+            <!-- ===== Page: Trash ===== -->
+            <div id="page-trash" class="page hidden">
+                <div class="page-content">
+                    <h3 data-i18n="navTrash" style="margin-bottom:16px;">Trash</h3>
+                    <div id="trashContent">
+                        <div class="trash-empty">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            <p data-i18n="trashEmpty">Trash is empty</p>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <div class="sub-toolbar">
-        <div class="sub-left"><button data-action="open-add-modal" data-i18n="newProfile"
-                style="background:var(--accent);color:var(--bg-color);">+ New Profile</button></div>
-        <div class="sub-right">
-            <input type="text" id="searchInput" class="search-box" placeholder="Search..."
-                >
-            <div class="icon-btn" data-action="toggle-view-mode" title="Toggle View"><svg id="viewIcon" viewBox="0 0 24 24"
-                    width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="7" height="7" />
-                    <rect x="14" y="3" width="7" height="7" />
-                    <rect x="14" y="14" width="7" height="7" />
-                    <rect x="3" y="14" width="7" height="7" />
-                </svg></div>
-        </div>
-    </div>
-
-    <div class="layout">
-        <div class="main-list" id="profileList"></div>
+        </main>
     </div>
 
     <!-- Modals -->
@@ -1100,11 +259,11 @@
                 <input type="text" id="addTags" placeholder="tiktok, fb..." spellcheck="false" autocomplete="off">
                 <label data-i18n="timezoneLabel" style="font-size:11px; font-weight:bold; opacity:0.8;">Timezone</label>
                 <div class="timezone-wrapper">
-                    <input type="text" id="addTimezone" placeholder="Type to search or select..." autocomplete="off">
+                    <input type="text" id="addTimezone" placeholder="Type to search or select..." data-i18n-placeholder="timezoneSearchPlaceholder" autocomplete="off">
                     <div class="timezone-dropdown" id="addTimezoneDropdown"></div>
                 </div>
                 <label data-i18n="proxyLink" style="font-size:11px; font-weight:bold; opacity:0.8;">Proxy</label>
-                <label style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Engine</label>
+                <label data-i18n="proxyEngineLabel" style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Engine</label>
                 <select id="addProxyEngine" class="quick-switch-select no-drag" style="width:100%; margin-bottom:8px;">
                     <option value="xray" selected>Xray (Recommended)</option>
                     <option value="sing-box">sing-box</option>
@@ -1142,7 +301,7 @@
                     style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:8px; display:block;">Location
                     (Geo)</label>
                 <div class="timezone-wrapper">
-                    <input type="text" id="addCity" placeholder="Type to search city..." autocomplete="off">
+                    <input type="text" id="addCity" placeholder="Type to search city..." data-i18n-placeholder="citySearchPlaceholder" autocomplete="off">
                     <div class="timezone-dropdown" id="addCityDropdown"></div>
                 </div>
                 <div data-i18n="geoHint" style="font-size:10px; opacity:0.5; margin-bottom:12px;">Select a city matching
@@ -1151,7 +310,7 @@
                 <label data-i18n="languageLabel"
                     style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:8px; display:block;">Language</label>
                 <div class="timezone-wrapper">
-                    <input type="text" id="addLanguage" placeholder="Type to search language..." autocomplete="off">
+                    <input type="text" id="addLanguage" placeholder="Type to search language..." data-i18n-placeholder="languageSearchPlaceholder" autocomplete="off">
                     <div class="timezone-dropdown" id="addLanguageDropdown"></div>
                 </div>
                 <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 10px;"
@@ -1187,7 +346,7 @@
                 <input type="text" id="editTags" spellcheck="false">
                 <label data-i18n="timezoneLabel" style="font-size:11px; font-weight:bold; opacity:0.8;">Timezone</label>
                 <div class="timezone-wrapper">
-                    <input type="text" id="editTimezone" placeholder="Type to search or select..." autocomplete="off">
+                    <input type="text" id="editTimezone" placeholder="Type to search or select..." data-i18n-placeholder="timezoneSearchPlaceholder" autocomplete="off">
                     <div class="timezone-dropdown" id="editTimezoneDropdown"></div>
                 </div>
                 <!-- Location Selector (Searchable) -->
@@ -1195,7 +354,7 @@
                     style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:8px; display:block;">Location
                     (Geo)</label>
                 <div class="timezone-wrapper">
-                    <input type="text" id="editCity" placeholder="Type to search city..." autocomplete="off">
+                    <input type="text" id="editCity" placeholder="Type to search city..." data-i18n-placeholder="citySearchPlaceholder" autocomplete="off">
                     <div class="timezone-dropdown" id="editCityDropdown"></div>
                 </div>
                 <!-- Hidden input to store confirmed value if needed, but we can parse the text or use a global var -->
@@ -1205,17 +364,17 @@
                 <label data-i18n="languageLabel"
                     style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:8px; display:block;">Language</label>
                 <div class="timezone-wrapper">
-                    <input type="text" id="editLanguage" placeholder="Type to search language..." autocomplete="off">
+                    <input type="text" id="editLanguage" placeholder="Type to search language..." data-i18n-placeholder="languageSearchPlaceholder" autocomplete="off">
                     <div class="timezone-dropdown" id="editLanguageDropdown"></div>
                 </div>
 
                 <label data-i18n="proxyLink" style="font-size:11px; font-weight:bold; opacity:0.8;">Proxy</label>
-                <label style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Engine</label>
+                <label data-i18n="proxyEngineLabel" style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Engine</label>
                 <select id="editProxyEngine" class="quick-switch-select no-drag" style="width:100%; margin-bottom:6px;">
                     <option value="xray" selected>Xray (Recommended)</option>
                     <option value="sing-box">sing-box</option>
                 </select>
-                <div style="font-size:10px; opacity:0.55; margin-bottom:8px;">Changing engine requires restarting the profile.</div>
+                <div style="font-size:10px; opacity:0.55; margin-bottom:8px;" data-i18n="proxyEngineRestartHint">Changing engine requires restarting the profile.</div>
                 <label data-i18n="proxyModeLabel" style="font-size:11px; font-weight:bold; opacity:0.8; margin-top:6px; display:block;">Proxy Mode</label>
                 <select id="editProxyMode" class="quick-switch-select no-drag" style="width:100%; margin-bottom:8px;">
                     <option value="app_proxy" selected data-i18n="proxyModeApp">App Proxy (SOCKS)</option>
@@ -1288,10 +447,10 @@
                 </div>
                 <!-- Remote Debugging Port (conditional) -->
                 <div id="debugPortSection" style="display:none; margin-top:12px;">
-                    <label style="font-size:11px; font-weight:bold; opacity:0.8;">Remote Debugging Port</label>
-                    <input type="number" id="editDebugPort" placeholder="Leave empty for auto-assign (e.g., 9222)">
+                    <label style="font-size:11px; font-weight:bold; opacity:0.8;" data-i18n="debugPortLabel">Remote Debugging Port</label>
+                    <input type="number" id="editDebugPort" placeholder="Leave empty for auto-assign (e.g., 9222)" data-i18n-placeholder="debugPortPlaceholder">
                     <div style="font-size:10px; color:#f39c12; margin-top:4px;">
-                        ⚠️ Enabling debugging port may increase detection risk
+                        <span data-i18n="debugPortWarning">⚠️ Enabling debugging port may increase detection risk</span>
                     </div>
                 </div>
                 <!-- Custom Launch Arguments (conditional) -->
@@ -1312,41 +471,399 @@
     </div>
 
     <!-- Other Modals (Keep same) -->
-    <div id="proxyModal" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header"><span data-i18n="manageChain">Manage Chain</span><span style="cursor:pointer"
-                    data-action="close-proxy-manager">✕</span></div>
-            <div
-                style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-shrink:0;">
-                <select id="proxyMode" style="width:180px; margin-bottom:0;"></select><label
-                    style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;"><input
-                        type="checkbox" id="notifySwitch" style="width:auto; margin:0;"> <span
-                        data-i18n="notify">Notify</span></label>
+    <div id="proxyModal" class="modal-overlay" data-advanced-expanded="collapsed">
+        <div class="modal-content proxy-modal-content">
+            <!-- Header -->
+            <div class="modal-header proxy-modal-header">
+                <div class="proxy-modal-header-left">
+                    <span class="proxy-modal-title" data-i18n="manageChain">Proxy Manager</span>
+                    <div class="proxy-header-mode-select">
+                        <span data-i18n="proxyModeLabel">Mode</span>
+                        <select id="proxyMode"></select>
+                    </div>
+                </div>
+                <span class="proxy-modal-close hover-bg" data-action="close-proxy-manager">✕</span>
             </div>
-            <div class="tab-header" id="proxyGroupTabs"></div>
-            <div
-                style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.1); padding:5px 10px; border-radius:4px; margin-bottom:10px; flex-shrink:0;">
-                <div id="currentGroupTitle" style="font-weight:bold; font-size:13px; color:var(--accent);">Manual</div>
-                <div style="display:flex; gap:10px;"><button class="outline" data-action="test-current-group"
-                        data-i18n="btnTestGroup" style="font-size:11px;">⚡ Test All</button><button class="outline"
-                        id="btnRollbackSub" data-action="rollback-current-group" style="font-size:11px; display:none;">↩ Rollback</button><button class="outline"
-                        id="btnEditSub" data-action="edit-current-subscription" style="font-size:11px; display:none;">✎ Edit
-                        Sub</button><button class="outline" data-action="open-sub-edit-modal" data-action-arg="true" data-i18n="btnImportSub"
-                        style="font-size:11px;">+ New Sub</button></div>
-            </div>
-            <div id="preProxyList"></div>
-            <div id="manualAddArea">
-                <div style="display:flex; gap:5px;"><input type="hidden" id="editProxyId"><input type="text"
-                        id="newProxyRemark" placeholder="Remark" style="width:25%; margin-bottom:0;"
-                        spellcheck="false"><input type="text" id="newProxyUrl" placeholder="vmess://, ss://..."
-                        style="flex:1; margin-bottom:0;" spellcheck="false"><button data-action="save-pre-proxy"
-                        data-i18n="add" id="btnSaveProxy" style="width:70px; margin-bottom:0;">Add</button></div>
-                <div style="font-size:11px; color:var(--text-secondary); margin-top:5px; text-align:right;"><span
-                        style="cursor:pointer; color:var(--accent);" data-action="reset-proxy-input">[Clear Input]</span>
+            <div class="proxy-top-hint" data-i18n="proxyTopHint">Benchmark flow · click row select · double-click test · / or Ctrl+F search</div>
+            <div class="proxy-modal-shell">
+                <!-- Left Panel -->
+                <aside class="proxy-sidebar no-drag">
+                    <div class="proxy-sidebar-section-label" data-i18n="proxyGroupsLabel">GROUPS</div>
+                    <div class="tab-header proxy-group-tabs" id="proxyGroupTabs"></div>
+
+                    <div class="proxy-sidebar-section-label" data-i18n="proxyStatsLabel">STATS</div>
+                    <div class="proxy-stats-cards" id="proxyStatsCards">
+                        <div class="proxy-stat-card is-pass">
+                            <div class="proxy-stat-left">
+                                <span class="proxy-stat-indicator"></span>
+                                <span class="proxy-stat-label" data-i18n="proxyWordPass">PASS</span>
+                            </div>
+                            <div class="proxy-stat-bar">
+                                <div class="proxy-stat-bar-fill" id="proxyStatPassBar" style="width: 0%"></div>
+                            </div>
+                            <span class="proxy-stat-value" id="proxyStatPass">0</span>
+                        </div>
+                        <div class="proxy-stat-card is-fail">
+                            <div class="proxy-stat-left">
+                                <span class="proxy-stat-indicator"></span>
+                                <span class="proxy-stat-label" data-i18n="proxyWordFail">FAIL</span>
+                            </div>
+                            <div class="proxy-stat-bar">
+                                <div class="proxy-stat-bar-fill" id="proxyStatFailBar" style="width: 0%"></div>
+                            </div>
+                            <span class="proxy-stat-value" id="proxyStatFail">0</span>
+                        </div>
+                        <div class="proxy-stat-card is-wait">
+                            <div class="proxy-stat-left">
+                                <span class="proxy-stat-indicator"></span>
+                                <span class="proxy-stat-label" data-i18n="proxyWordWait">WAIT</span>
+                            </div>
+                            <div class="proxy-stat-bar">
+                                <div class="proxy-stat-bar-fill" id="proxyStatWaitBar" style="width: 0%"></div>
+                            </div>
+                            <span class="proxy-stat-value" id="proxyStatWait">0</span>
+                        </div>
+                    </div>
+
+                    <div class="proxy-sidebar-section-label" data-i18n="proxyActionsLabel">ACTIONS</div>
+                    <div class="proxy-quick-actions">
+                        <button class="outline" id="proxyGroupTestBtn" data-action="test-current-group" data-i18n="btnTestGroup">⚡ Test All</button>
+                        <button class="outline" data-action="open-sub-edit-modal" data-action-arg="true" data-i18n="btnImportSub">+ New Subscription</button>
+                        <button class="outline" data-action="export-current-group-report" data-i18n="proxyReport">⤓ Export Report</button>
+                        <button class="outline" data-action="snapshot-current-group" data-i18n="proxySnapshot">Snapshot</button>
+                        <button class="outline" id="btnRollbackSub" data-action="rollback-current-group" style="display:none;" data-i18n="proxyRollback">↩ Rollback</button>
+                        <button class="outline" id="btnEditSub" data-action="edit-current-subscription" style="display:none;" data-i18n="btnEditSub">✎ Edit Sub</button>
+                    </div>
+
+                    <div class="proxy-group-header" aria-hidden="true">
+                        <div class="proxy-group-header-left">
+                            <div class="proxy-group-stats" id="proxyGroupStats">PASS 0 · FAIL 0 · WAIT 0 · AVG - · P95 -</div>
+                            <div class="proxy-group-delta" id="proxyGroupDelta" data-empty="true" data-i18n="proxyGroupDeltaEmpty">No benchmark snapshot yet</div>
+                            <div class="proxy-diagnostics-toggle-row">
+                                <button class="outline proxy-diagnostics-toggle" id="proxyDiagnosticsToggleBtn" data-action="toggle-proxy-diagnostics" data-expanded="false" aria-expanded="false" data-i18n="proxyDiagnosticsExpand">Show Diagnostics</button>
+                            </div>
+                            <div class="proxy-diagnostics-panel is-collapsed" id="proxyDiagnosticsPanel">
+                                <div class="proxy-diagnostics-summary-row" id="proxyDiagnosticsSummaryRow">
+                                    <div class="proxy-diagnostics-summary-card is-info" id="proxyDiagSummaryFailCard">
+                                        <span class="proxy-diagnostics-summary-label" data-i18n="proxyDiagSummaryFailLabel">Fail Focus</span>
+                                        <span class="proxy-diagnostics-summary-value" id="proxyDiagSummaryFailValue">No data</span>
+                                    </div>
+                                    <div class="proxy-diagnostics-summary-card is-info" id="proxyDiagSummaryTrendCard">
+                                        <span class="proxy-diagnostics-summary-label" data-i18n="proxyDiagSummaryTrendLabel">Trend Δ</span>
+                                        <span class="proxy-diagnostics-summary-value" id="proxyDiagSummaryTrendValue">No data</span>
+                                    </div>
+                                    <div class="proxy-diagnostics-summary-card is-info" id="proxyDiagSummaryAnomalyCard">
+                                        <span class="proxy-diagnostics-summary-label" data-i18n="proxyDiagSummaryAnomalyLabel">Anomaly</span>
+                                        <span class="proxy-diagnostics-summary-value" id="proxyDiagSummaryAnomalyValue">No data</span>
+                                    </div>
+                                </div>
+                                <div class="proxy-diagnostics-details-toggle-row">
+                                    <button class="outline proxy-diagnostics-details-toggle" id="proxyDiagnosticsDetailToggleBtn" data-action="toggle-proxy-diagnostics-detail" data-expanded="false" aria-expanded="false" data-i18n="proxyDiagnosticsDetailsExpand">Show Diagnostics Details</button>
+                                </div>
+                                <div class="proxy-diagnostics-details is-collapsed" id="proxyDiagnosticsDetails">
+                                    <div class="proxy-fail-mini-chart" id="proxyFailCodeMiniChart"></div>
+                                    <div class="proxy-fail-trend" id="proxyFailTrendTimeline"></div>
+                                    <div class="proxy-trend-diff-pack" id="proxyTrendDiffPack"></div>
+                                    <div class="proxy-trend-anomaly-badges" id="proxyTrendAnomalyBadges"></div>
+                                    <div class="proxy-trend-anomaly-history" id="proxyTrendAnomalyHistory"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <label class="proxy-switch" style="margin-top:auto; padding-top:8px;"><input type="checkbox" id="notifySwitch"><span data-i18n="notify">Notify</span></label>
+                </aside>
+                <!-- Center Panel -->
+                <div class="proxy-main">
+                    <div class="proxy-main-left">
+                        <div class="proxy-filter-stack" id="proxyFilterStack">
+                            <div class="proxy-list-controls proxy-list-controls--primary">
+                                <input id="proxySearchInput" type="text" placeholder="Search keywords (space=AND, |=OR)" data-i18n-placeholder="proxySearchPlaceholder">
+                                <select id="proxySortBy">
+                                    <option value="default" data-i18n="proxySortDefault">Sort: Default</option>
+                                    <option value="latency_asc" data-i18n="proxySortLatencyAsc">Sort: Latency ↑</option>
+                                    <option value="latency_desc" data-i18n="proxySortLatencyDesc">Sort: Latency ↓</option>
+                                    <option value="updated_desc" data-i18n="proxySortLatest">Sort: Latest Test</option>
+                                    <option value="fail_first" data-i18n="proxySortFailFirst">Sort: FAIL First</option>
+                                    <option value="name_asc" data-i18n="proxySortNameAsc">Sort: Name A-Z</option>
+                                </select>
+                                <button class="outline proxy-filter-toggle" id="proxySecondaryFilterToggleBtn" data-action="toggle-proxy-secondary-filters" data-expanded="false" aria-expanded="false" data-i18n="proxyFiltersMore">More Filters</button>
+                            </div>
+                            <div class="proxy-status-quickbar" id="proxyStatusQuickbar">
+                                <button class="proxy-status-chip active" data-action="set-proxy-status-filter" data-action-arg="all" data-status-filter="all">
+                                    <span data-i18n="proxyQuickAll">ALL</span><strong id="proxyQuickAllCount">0</strong>
+                                </button>
+                                <button class="proxy-status-chip" data-action="set-proxy-status-filter" data-action-arg="pass" data-status-filter="pass">
+                                    <span data-i18n="proxyQuickPass">PASS</span><strong id="proxyQuickPassCount">0</strong>
+                                </button>
+                                <button class="proxy-status-chip" data-action="set-proxy-status-filter" data-action-arg="fail" data-status-filter="fail">
+                                    <span data-i18n="proxyQuickFail">FAIL</span><strong id="proxyQuickFailCount">0</strong>
+                                </button>
+                                <button class="proxy-status-chip" data-action="set-proxy-status-filter" data-action-arg="wait" data-status-filter="wait">
+                                    <span data-i18n="proxyQuickWait">WAIT</span><strong id="proxyQuickWaitCount">0</strong>
+                                </button>
+                            </div>
+                            <div id="proxySecondaryFilters" class="proxy-secondary-filters is-collapsed">
+                                <div class="proxy-list-controls proxy-list-controls--secondary">
+                                    <select id="proxyStatusFilter">
+                                        <option value="all" data-i18n="proxyStatusAll">Status: All</option>
+                                        <option value="pass" data-i18n="proxyStatusPass">Status: PASS</option>
+                                        <option value="fail" data-i18n="proxyStatusFail">Status: FAIL</option>
+                                        <option value="wait" data-i18n="proxyStatusWait">Status: WAIT</option>
+                                    </select>
+                                    <div class="proxy-list-control-actions"><button class="outline" data-action="clear-proxy-filters" data-i18n="proxyClearFilters">Clear
+                                            Filters</button><button class="outline" data-action="snapshot-current-group" data-i18n="proxySnapshot">Snapshot</button>
+                                    </div>
+                                </div>
+                                <div class="proxy-query-presets">
+                                    <span class="proxy-query-presets-label" data-i18n="proxyQueryPresetsLabel">Query Presets</span>
+                                    <button class="outline" data-action="apply-proxy-query-preset" data-action-arg="fail_network" data-proxy-preset="fail_network" data-i18n="proxyPresetFailNetwork">FAIL · Network</button>
+                                    <button class="outline" data-action="apply-proxy-query-preset" data-action-arg="fail_tls" data-proxy-preset="fail_tls" data-i18n="proxyPresetFailTls">FAIL · TLS</button>
+                                    <button class="outline" data-action="apply-proxy-query-preset" data-action-arg="fail_auth" data-proxy-preset="fail_auth" data-i18n="proxyPresetFailAuth">FAIL · Auth</button>
+                                    <button class="outline" data-action="apply-proxy-query-preset" data-action-arg="wait_retry" data-proxy-preset="wait_retry" data-i18n="proxyPresetWaitRetry">WAIT · Retry</button>
+                                    <button class="outline" data-action="apply-proxy-query-preset" data-action-arg="slow_latency" data-proxy-preset="slow_latency" data-i18n="proxyPresetSlowLatency">SLOW · Latency</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="proxy-advanced-shell" id="proxyAdvancedShell">
+                <div class="proxy-advanced-toolbar">
+                    <div class="proxy-advanced-toolbar-left">
+                        <div class="proxy-advanced-title" data-i18n="advancedSettings">Advanced Settings</div>
+                        <div class="proxy-advanced-desc" data-i18n="advancedHint">Presets, trust policy and test strategy</div>
+                    </div>
+                    <button class="outline proxy-advanced-toggle" id="proxyAdvancedToggleBtn" data-action="toggle-proxy-advanced" data-expanded="false" aria-expanded="false" data-i18n="showAdvanced">Show Advanced</button>
+                </div>
+                <div class="proxy-advanced-view-switch">
+                    <span class="proxy-advanced-view-label" data-i18n="proxyAdvancedViewLabel">View</span>
+                    <button class="outline" data-action="set-proxy-advanced-view" data-action-arg="common" data-advanced-view="common" aria-pressed="true" data-i18n="proxyAdvancedViewCommon">Common</button>
+                    <button class="outline" data-action="set-proxy-advanced-view" data-action-arg="expert" data-advanced-view="expert" aria-pressed="false" data-i18n="proxyAdvancedViewExpert">Expert</button>
+                </div>
+                <div class="proxy-advanced-common-hint" data-i18n="proxyAdvancedCommonHint">Showing common controls. Switch to Expert for routing/trust audits.</div>
+                <div id="proxyAdvancedPanel" class="proxy-advanced-panel is-collapsed">
+                    <div class="proxy-query-preset-manager">
+                        <div class="proxy-advanced-section proxy-advanced-section--ops">
+                            <div class="proxy-advanced-section-title" data-i18n="proxyAdvancedSectionOps">Preset & Export</div>
+                            <div class="proxy-advanced-button-grid">
+                                <button class="outline" data-action="save-current-proxy-preset" data-i18n="proxyPresetSaveCurrent">Save Current as Preset</button>
+                                <button class="outline" data-action="export-proxy-query-presets" data-i18n="proxyPresetExportSet">Export Preset Set</button>
+                                <button class="outline" data-action="import-proxy-query-presets" data-i18n="proxyPresetImportSet">Import Preset Set</button>
+                                <button class="outline" data-action="export-proxy-trend-snapshot" data-i18n="proxyTrendExport">Export Trend Snapshot</button>
+                                <button class="outline" data-action="import-proxy-trend-snapshot" data-i18n="proxyTrendImport">Import Trend Snapshot</button>
+                                <button class="outline" data-action="export-proxy-anomaly-rollup" data-advanced-tier="expert" data-i18n="proxyAnomalyRollupExport">Export Anomaly Rollup</button>
+                                <button class="outline" data-action="export-proxy-anomaly-replay" data-advanced-tier="expert" data-i18n="proxyAnomalyReplayExport">Export Anomaly Replay</button>
+                                <button class="outline" data-action="import-proxy-anomaly-replay" data-advanced-tier="expert" data-i18n="proxyAnomalyReplayImport">Import Anomaly Replay</button>
+                            </div>
+                            <div id="proxyCustomPresetList"></div>
+                        </div>
+                        <div class="proxy-advanced-section proxy-advanced-section--route proxy-advanced-section--expert">
+                            <div class="proxy-advanced-section-title" data-i18n="proxyAdvancedSectionRoute">Replay Routing</div>
+                            <label class="proxy-trust-policy-inline">
+                                <span data-i18n="proxyReplayRouteLabel">Replay Route</span>
+                                <select id="proxyReplayImportRouteMode">
+                                    <option value="payload" data-i18n="proxyReplayRoutePayloadGroup">Payload Group</option>
+                                    <option value="mapped" data-i18n="proxyReplayRouteMappedPayload">Mapped / Payload</option>
+                                    <option value="current" data-i18n="proxyReplayRouteCurrentGroup">Current Group</option>
+                                </select>
+                            </label>
+                            <div class="proxy-advanced-button-grid">
+                                <button class="outline" data-action="manage-proxy-replay-route-map" data-i18n="proxyManageReplayRouteMap">Manage Replay Route Map</button>
+                                <button class="outline" data-action="export-proxy-replay-route-drift" data-i18n="proxyReplayRouteDriftExport">Export Replay Route Drift</button>
+                                <button class="outline" data-action="apply-proxy-replay-mitigation" data-i18n="proxyReplayMitigationApply">Apply Replay Mitigation</button>
+                            </div>
+                            <div id="proxyReplayRouteSummary" class="proxy-preset-trust-summary">Replay route: payload · map 0</div>
+                            <div id="proxyReplayRouteDriftSummary" class="proxy-preset-policy-drift" data-i18n="proxyReplayRouteDriftInit">Replay route drift: none</div>
+                            <div id="proxyReplayRouteMitigationHint" class="proxy-preset-trust-summary" data-i18n="proxyReplayMitigationInit">Replay mitigation: none</div>
+                        </div>
+                        <div class="proxy-advanced-section proxy-advanced-section--trust proxy-advanced-section--expert">
+                            <div class="proxy-advanced-section-title" data-i18n="proxyAdvancedSectionTrust">Trust & Audit</div>
+                            <div class="proxy-advanced-button-grid">
+                                <button class="outline" data-action="manage-proxy-preset-pins" data-i18n="proxyManagePinnedKeys">Manage Pinned Keys</button>
+                                <button class="outline" data-action="manage-proxy-signer-key" data-i18n="proxySignerKey">Set Signer Key</button>
+                            </div>
+                            <span class="proxy-issuer-template-row">
+                                <span class="proxy-issuer-label" data-i18n="proxyIssuerTemplateLabel">Issuer Template</span>
+                                <button class="outline" data-action="apply-proxy-issuer-policy-template" data-action-arg="strict_local" data-i18n="proxyIssuerTplStrictLocal">Strict Local</button>
+                                <button class="outline" data-action="apply-proxy-issuer-policy-template" data-action-arg="strict_current" data-i18n="proxyIssuerTplStrictCurrent">Strict Current</button>
+                                <button class="outline" data-action="apply-proxy-issuer-policy-template" data-action-arg="bootstrap_permissive" data-i18n="proxyIssuerTplBootstrap">Bootstrap</button>
+                            </span>
+                            <label class="proxy-trust-policy-inline">
+                                <span data-i18n="proxyTrustLabel">Trust</span>
+                                <select id="proxyPresetTrustPolicy">
+                                    <option value="signed_preferred" data-i18n="proxyTrustSignedPreferred">Signed Preferred</option>
+                                    <option value="signed_only" data-i18n="proxyTrustSignedOnly">Signed Only</option>
+                                    <option value="permissive" data-i18n="proxyTrustPermissive">Permissive</option>
+                                </select>
+                            </label>
+                            <div id="proxyPresetTrustSummary" class="proxy-preset-trust-summary">Trust: signed_preferred · tpl Custom · pins 0 · signer local-default</div>
+                            <div id="proxyPresetPolicyDrift" class="proxy-preset-policy-drift" data-i18n="proxyPresetPolicyDriftInit">Policy drift: none</div>
+                            <div id="proxyPresetProvenanceDiff" class="proxy-preset-provenance-diff" data-i18n="proxyPresetProvenanceInit">Provenance: no snapshots yet</div>
+                            <div id="proxyPresetTrustGateStatus" class="proxy-preset-trust-gate-status" data-i18n="proxyPresetTrustGateInit">Trust gate: idle</div>
+                            <div id="proxyTrustExplainabilitySummary" class="proxy-preset-policy-drift" data-i18n="proxyTrustExplainabilityInit">Trust explainability: none</div>
+                            <div id="proxyTrustExplainabilityHistorySummary" class="proxy-preset-policy-drift" data-i18n="proxyTrustExplainabilityHistoryInit">Trust explainability history: none</div>
+                            <div id="proxyIssuerTemplateRemediation" class="proxy-preset-trust-summary" data-i18n="proxyIssuerRemediationInit">Issuer remediation: none</div>
+                            <div id="proxyMitigationTelemetrySummary" class="proxy-preset-policy-drift" data-i18n="proxyMitigationTelemetryInit">Mitigation telemetry: none</div>
+                            <div id="proxyTrustMitigationCorrelationSummary" class="proxy-preset-policy-drift" data-i18n="proxyTrustMitigationCorrelationInit">Trust/mitigation correlation: none</div>
+                            <div id="proxyTrustMitigationAlertSummary" class="proxy-preset-policy-drift" data-i18n="proxyTrustMitigationAlertInit">Correlation alerts: none</div>
+                            <div id="proxyTrustMitigationAlertTrendSummary" class="proxy-preset-policy-drift" data-i18n="proxyTrustMitigationAlertTrendInit">Alert trend: no history</div>
+                            <div id="proxyTrustGateAuditSummary" class="proxy-preset-policy-drift" data-i18n="proxyTrustGateExceptionsInit">Trust exceptions: none</div>
+                            <div class="proxy-advanced-button-grid">
+                                <button class="outline" data-action="apply-proxy-issuer-remediation" data-i18n="proxyApplyRemediation">Apply Remediation</button>
+                                <button class="outline" data-action="export-proxy-policy-drift-audit" data-i18n="proxyExportPolicyDriftAudit">Export Policy Drift Audit</button>
+                                <button class="outline" data-action="export-proxy-preset-provenance" data-i18n="proxyExportPresetProvenance">Export Preset Provenance</button>
+                                <button class="outline" data-action="export-proxy-trust-gate-audit" data-i18n="proxyExportTrustGateAudit">Export Trust Gate Audit</button>
+                                <button class="outline" data-action="export-proxy-trust-explainability" data-i18n="proxyExportTrustExplainability">Export Trust Explainability</button>
+                                <button class="outline" data-action="export-proxy-mitigation-telemetry" data-i18n="proxyExportMitigationTelemetry">Export Mitigation Telemetry</button>
+                                <button class="outline" data-action="export-proxy-trust-mitigation-correlation" data-i18n="proxyExportTrustMitigationCorrelation">Export Trust/Mitigation Correlation</button>
+                                <button class="outline" data-action="export-proxy-trust-mitigation-alerts" data-i18n="proxyExportTrustMitigationAlerts">Export Correlation Alerts</button>
+                                <button class="outline" data-action="clear-proxy-trust-mitigation-alerts" data-i18n="proxyClearTrustMitigationAlerts">Clear Correlation Alerts</button>
+                            </div>
+                        </div>
+                    </div>
+                </div><!-- closes #proxyAdvancedPanel -->
+                    <div class="proxy-strategy-panel" id="proxyStrategyPanel">
+                        <div class="proxy-strategy-panel-head">
+                            <div class="proxy-strategy-title-wrap">
+                                <div class="proxy-strategy-title" data-i18n="proxyStrategyTitle">Test Strategy</div>
+                                <div class="proxy-strategy-subtitle" data-i18n="proxyStrategySubtitle">Common controls for fast triage; switch to Expert for probe/backoff tuning.</div>
+                            </div>
+                            <button class="outline proxy-strategy-save-btn" data-action="save-proxy-test-strategy" data-i18n="proxySaveStrategy">Save Strategy</button>
+                        </div>
+                        <div class="proxy-strategy-grid">
+                            <label class="proxy-strategy-item proxy-strategy-item--toggle proxy-strategy-item--common">
+                                <input type="checkbox" id="proxyTestStrategyEnabled">
+                                <span data-i18n="proxyStrategyEnabled">Strategy</span>
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--profile proxy-strategy-item--common">
+                                <span data-i18n="proxyStrategyProfile">Profile</span>
+                                <select id="proxyTestProfile">
+                                    <option value="quick" data-i18n="proxyStrategyQuick">Quick</option>
+                                    <option value="standard" data-i18n="proxyStrategyStandard">Standard</option>
+                                    <option value="deep" data-i18n="proxyStrategyDeep">Deep</option>
+                                </select>
+                                <div class="proxy-strategy-profile-pills">
+                                    <button class="outline proxy-strategy-profile-chip" type="button" data-action="apply-proxy-test-profile" data-action-arg="quick" data-profile-chip="quick" aria-pressed="false" data-i18n="proxyStrategyQuick">Quick</button>
+                                    <button class="outline proxy-strategy-profile-chip" type="button" data-action="apply-proxy-test-profile" data-action-arg="standard" data-profile-chip="standard" aria-pressed="false" data-i18n="proxyStrategyStandard">Standard</button>
+                                    <button class="outline proxy-strategy-profile-chip" type="button" data-action="apply-proxy-test-profile" data-action-arg="deep" data-profile-chip="deep" aria-pressed="false" data-i18n="proxyStrategyDeep">Deep</button>
+                                </div>
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--common">
+                                <span data-i18n="proxyStrategyConcurrency">C</span>
+                                <input id="proxyTestMaxConcurrency" type="number" min="1" max="16">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--common">
+                                <span data-i18n="proxyStrategyBatch">Batch</span>
+                                <input id="proxyTestBatchSize" type="number" min="10" max="200">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--common">
+                                <span data-i18n="proxyStrategyBudget">Budget(s)</span>
+                                <input id="proxyTestBudgetSec" type="number" min="5" max="600">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--expert">
+                                <span data-i18n="proxyStrategyBackoff">Backoff(ms)</span>
+                                <input id="proxyTestBackoffMs" type="number" min="0" max="20000">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--expert">
+                                <span data-i18n="proxyStrategyProbeTimeout">Probe(s)</span>
+                                <input id="proxyTestProbeTimeoutSec" type="number" min="2" max="30">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--expert">
+                                <span data-i18n="proxyStrategyIpTimeout">IP(s)</span>
+                                <input id="proxyTestIpTimeoutSec" type="number" min="2" max="30">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--expert">
+                                <span data-i18n="proxyStrategyGeoTimeout">Geo(s)</span>
+                                <input id="proxyTestGeoTimeoutSec" type="number" min="2" max="30">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--expert">
+                                <span data-i18n="proxyStrategyProbeCount">ProbeN</span>
+                                <input id="proxyTestProbeCount" type="number" min="1" max="4">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--expert">
+                                <span data-i18n="proxyStrategyProbeParallelism">P∥</span>
+                                <input id="proxyTestProbeParallelism" type="number" min="1" max="4">
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--toggle proxy-strategy-item--expert">
+                                <input type="checkbox" id="proxyTestIncludeGeo">
+                                <span data-i18n="proxyStrategyGeoSwitch">Geo</span>
+                            </label>
+                        </div>
+                        <div class="proxy-strategy-common-hint" data-i18n="proxyStrategyCommonHint">Common mode keeps profile, concurrency and budget up front. Switch to Expert for probe/backoff tuning.</div>
+                    </div>
+                </div><!-- closes .proxy-advanced-shell -->
+                <div class="proxy-list-stage">
+                    <div id="preProxyList" class="proxy-node-list"></div>
+                </div>
+                <div id="manualAddArea" class="proxy-add-panel">
+                    <div class="proxy-add-row">
+                        <input type="hidden" id="editProxyId">
+                        <input type="text" id="newProxyRemark" placeholder="Remark" spellcheck="false" data-i18n-placeholder="remark">
+                        <input type="text" id="newProxyUrl" placeholder="vmess://, ss://..." spellcheck="false" data-i18n-placeholder="proxyAddUrlPlaceholder">
+                        <button data-action="save-pre-proxy" data-i18n="add" id="btnSaveProxy">Add</button>
+                    </div>
+                    <div class="proxy-add-foot">
+                        <span data-action="reset-proxy-input" data-i18n="proxyClearInput">[Clear Input]</span>
+                    </div>
                 </div>
             </div>
-            <div style="text-align:right; margin-top:10px; flex-shrink:0;"><button data-action="save-proxy-settings"
-                    data-i18n="done">Done</button></div>
+        </div>
+            <!-- Right Panel (Inspector Drawer) -->
+            <div class="proxy-inspector-overlay" data-action="close-proxy-inspector-drawer"></div>
+            <aside class="proxy-main-right no-drag">
+                <button class="proxy-inspector-close-btn hover-bg" data-action="close-proxy-inspector-drawer" title="Close">✕</button>
+                <div class="proxy-inspector" id="proxyInspector">
+                    <div class="proxy-inspector-empty" id="proxyInspectorEmpty" data-i18n="proxyInspectorEmpty">Select a node to see details</div>
+                    <div class="proxy-inspector-content" id="proxyInspectorContent" style="display:none;">
+                        <div class="proxy-inspector-head">
+                            <div class="proxy-inspector-title" id="proxyInspectorTitle">-</div>
+                            <div class="proxy-inspector-sub" id="proxyInspectorSub">-</div>
+                        </div>
+                        <div class="proxy-inspector-summary" id="proxyInspectorSummary"></div>
+                        <div class="proxy-inspector-meta" id="proxyInspectorMeta"></div>
+                        <div class="proxy-inspector-url">
+                            <div class="proxy-inspector-url-top">
+                                <span class="proxy-inspector-url-label" data-i18n="proxyLink">Proxy Link</span>
+                                <button class="outline" data-action="copy-proxy-url" id="proxyInspectorCopyUrlBtn" data-i18n="copy">Copy</button>
+                            </div>
+                            <div class="proxy-inspector-url-value" id="proxyInspectorUrl"></div>
+                        </div>
+                        <div class="proxy-inspector-actions" id="proxyInspectorActions"></div>
+                        <div class="proxy-inspector-sections">
+                            <div class="proxy-inspector-section" id="proxyInspectorStepsSection">
+                                <button class="outline proxy-inspector-section-toggle" id="proxyInspectorStepsToggleBtn" type="button" data-action="toggle-proxy-inspector-steps" data-expanded="true" aria-expanded="true">
+                                    <span class="proxy-inspector-section-label" data-i18n="proxyDetailStepsTitle">Steps</span>
+                                    <span class="proxy-inspector-section-count" id="proxyInspectorStepsCount">0</span>
+                                </button>
+                                <div class="proxy-inspector-section-body" id="proxyInspectorSteps"></div>
+                            </div>
+                            <div class="proxy-inspector-section is-collapsed" id="proxyInspectorAttemptsSection">
+                                <button class="outline proxy-inspector-section-toggle" id="proxyInspectorAttemptsToggleBtn" type="button" data-action="toggle-proxy-inspector-attempts" data-expanded="false" aria-expanded="false">
+                                    <span class="proxy-inspector-section-label" data-i18n="proxyDetailAttemptsTitle">Attempts</span>
+                                    <span class="proxy-inspector-section-count" id="proxyInspectorAttemptsCount">0</span>
+                                </button>
+                                <div class="proxy-inspector-section-section-body" id="proxyInspectorAttempts"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+            <!-- Footer -->
+            <div class="proxy-modal-footer">
+                <div class="proxy-footer-stats" id="proxyFooterStats">
+                    <span class="proxy-footer-stat is-pass"><span class="proxy-footer-stat-dot"></span><span id="proxyFooterPassCount">0</span></span>
+                    <span class="proxy-footer-stat is-fail"><span class="proxy-footer-stat-dot"></span><span id="proxyFooterFailCount">0</span></span>
+                    <span class="proxy-footer-stat is-wait"><span class="proxy-footer-stat-dot"></span><span id="proxyFooterWaitCount">0</span></span>
+                    <span class="proxy-footer-sep"></span>
+                    <span class="proxy-footer-meta" id="proxyFooterAvg">avg —</span>
+                    <span class="proxy-footer-sep"></span>
+                    <span class="proxy-footer-meta" id="proxyFooterTested">—</span>
+                </div>
+                <div class="proxy-footer-status" id="proxyFooterStatus" style="display:none;"></div>
+                <div class="proxy-footer-actions">
+                    <label class="proxy-footer-notify"><input type="checkbox" id="notifySwitch2"><span data-i18n="notify">Notify</span></label>
+                    <button class="outline" data-action="toggle-proxy-inspector" id="proxyInspectorToggleBtn" data-i18n="proxyInspectorToggle">Toggle Details</button>
+                    <button data-action="save-proxy-settings" data-i18n="done">Save &amp; Close</button>
+                </div>
+            </div>
         </div>
     </div>
     <div id="exportModal" class="modal-overlay" style="z-index: 2200;">
@@ -1425,38 +942,46 @@
     <div id="passwordModal" class="modal-overlay" style="z-index: 2400;">
         <div class="modal-content" style="width: 380px;">
             <div class="modal-header">
-                <span id="passwordModalTitle">设置备份密码</span>
+                <span id="passwordModalTitle" data-i18n="backupPasswordTitle">设置备份密码</span>
                 <span style="cursor:pointer" data-action="close-password-modal">✕</span>
             </div>
             <div class="modal-body">
-                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 15px;">
+                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 15px;" data-i18n="backupPasswordDesc">
                     完整备份包含敏感数据（Cookie、密码等），将使用 AES-256 加密保护。
                 </p>
-                <label style="font-size: 12px;">密码</label>
-                <input type="password" id="backupPassword" placeholder="请输入密码" style="margin-bottom: 10px;">
-                <label style="font-size: 12px;" id="confirmPasswordLabel">确认密码</label>
-                <input type="password" id="backupPasswordConfirm" placeholder="请再次输入密码">
+                <label style="font-size: 12px;" data-i18n="backupPasswordLabel">密码</label>
+                <input type="password" id="backupPassword" placeholder="请输入密码" data-i18n-placeholder="backupPasswordPlaceholder" style="margin-bottom: 10px;">
+                <label style="font-size: 12px;" id="confirmPasswordLabel" data-i18n="backupPasswordConfirmLabel">确认密码</label>
+                <input type="password" id="backupPasswordConfirm" placeholder="请再次输入密码" data-i18n-placeholder="backupPasswordConfirmPlaceholder">
             </div>
             <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px;">
-                <button class="outline" data-action="close-password-modal">取消</button>
-                <button data-action="submit-password">确定</button>
+                <button class="outline" data-action="close-password-modal" data-i18n="cancel">取消</button>
+                <button data-action="submit-password" data-i18n="confirm">确定</button>
             </div>
         </div>
     </div>
     <div id="subEditModal" class="modal-overlay" style="z-index: 1100;">
         <div class="modal-content">
-            <div class="modal-header"><span>Sub</span><span style="cursor:pointer"
-                    data-action="close-sub-edit-modal">✕</span></div><input type="hidden"
-                id="subId"><label>Name</label><input type="text" id="subName"
-                spellcheck="false"><label>URL</label><input type="text" id="subUrl" spellcheck="false"><label>Auto
-                Update</label><select id="subInterval">
-                <option value="0">Disabled</option>
-                <option value="24">24h</option>
-                <option value="72">72h</option>
-                <option value="custom">Custom</option>
-            </select><input type="number" id="subCustomInterval" placeholder="Hours" style="display:none;">
-            <div style="text-align:right; margin-top:15px;"><button class="danger" data-action="delete-subscription"
-                    id="btnDelSub" style="float:left;">Delete</button><button data-action="save-subscription">Save</button>
+            <div class="modal-header">
+                <span data-i18n="subTitle">Subscription Settings</span>
+                <span style="cursor:pointer" data-action="close-sub-edit-modal">✕</span>
+            </div>
+            <input type="hidden" id="subId">
+            <label data-i18n="subName">Name</label>
+            <input type="text" id="subName" spellcheck="false">
+            <label data-i18n="subUrl">URL</label>
+            <input type="text" id="subUrl" spellcheck="false">
+            <label data-i18n="subInterval">Auto Update</label>
+            <select id="subInterval">
+                <option value="0" data-i18n="optDisabled">Disabled</option>
+                <option value="24" data-i18n="opt24h">Every 24 Hours</option>
+                <option value="72" data-i18n="opt72h">Every 72 Hours</option>
+                <option value="custom" data-i18n="optCustom">Custom (Hours)</option>
+            </select>
+            <input type="number" id="subCustomInterval" data-i18n-placeholder="subCustomIntervalPlaceholder" placeholder="Hours" style="display:none;">
+            <div style="text-align:right; margin-top:15px;">
+                <button class="danger" data-action="delete-subscription" id="btnDelSub" style="float:left;" data-i18n="btnDelSub">Delete Sub</button>
+                <button data-action="save-subscription" data-i18n="save">Save</button>
             </div>
         </div>
     </div>
@@ -1466,7 +991,7 @@
                     style="color: var(--danger); font-size: 40px;">⚠</span></div>
             <p id="confirmMsg" style="margin: 10px 0 20px;">Msg</p>
             <div style="display: flex; justify-content: center; gap: 15px;">
-                <button class="outline" data-action="close-confirm" data-action-arg="false">Cancel</button>
+                <button class="outline" data-action="close-confirm" data-action-arg="false" data-i18n="cancel">Cancel</button>
                 <button id="confirmAltBtn" class="outline" style="display:none;" data-action="close-confirm" data-action-arg="alt">Alt</button>
                 <button id="confirmOkBtn" class="danger" data-action="close-confirm" data-action-arg="true">Confirm</button>
             </div>
@@ -1502,6 +1027,97 @@
             </div>
         </div>
     </div>
+
+    <!-- Cookie Manager Modal -->
+    <div id="cookieManagerModal" class="modal-overlay" style="z-index: 2003; display:none;">
+        <div class="modal-content" style="max-width: 1080px; width: 92vw; max-height: 88vh; display:flex; flex-direction:column;">
+            <div class="modal-header" style="justify-content: space-between;">
+                <span id="cookieManagerTitle" data-i18n="cookieManagerTitle">Cookie Manager</span>
+                <span style="cursor:pointer" data-action="close-cookie-manager">✕</span>
+            </div>
+            <div class="modal-body" style="display:flex; flex-direction:column; gap:10px; min-height:0; flex:1;">
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <label for="cookieSiteSelect" style="font-size:12px; opacity:0.85;" data-i18n="cookieSiteFilterLabel">Site</label>
+                    <select id="cookieSiteSelect" style="min-width: 220px;">
+                        <option value="" data-i18n="cookieSiteAll">All Sites</option>
+                    </select>
+                    <button class="outline" data-action="refresh-cookie-sites" data-i18n="refresh">Refresh</button>
+                    <button class="outline" data-action="open-cookie-add" data-i18n="cookieNewBtn">New</button>
+                    <button class="outline" data-action="import-profile-cookies" data-i18n="cookieImportBtn">Import</button>
+                    <button class="outline" data-action="export-profile-cookies" data-i18n="cookieExportBtn">Export</button>
+                    <button class="danger outline" data-action="clear-profile-cookies-site" data-i18n="cookieClearScopeBtn">Clear Scope</button>
+                </div>
+                <div id="cookieSummary" style="font-size:12px; opacity:0.75;">-</div>
+                <div style="display:grid; grid-template-columns: 1.45fr 1fr; gap:12px; min-height:0; flex:1;">
+                    <div style="display:flex; flex-direction:column; min-height:0;">
+                        <div style="overflow:auto; border:1px solid var(--border); border-radius:10px; min-height:0; flex:1;">
+                            <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                                <thead style="position:sticky; top:0; z-index:1; background: rgba(0,0,0,0.25);">
+                                    <tr>
+                                        <th style="text-align:left; padding:8px;" data-i18n="cookieColName">Name</th>
+                                        <th style="text-align:left; padding:8px;" data-i18n="cookieColDomain">Domain</th>
+                                        <th style="text-align:left; padding:8px;" data-i18n="cookieColPath">Path</th>
+                                        <th style="text-align:left; padding:8px;" data-i18n="cookieColValue">Value</th>
+                                        <th style="text-align:left; padding:8px;" data-i18n="cookieColExpires">Expires</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="cookieTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:8px; border:1px solid var(--border); border-radius:10px; padding:10px; min-height:0; overflow:auto;">
+                        <div id="cookieEditorTitle" style="font-weight:600;" data-i18n="cookieEditorTitle">Cookie Editor</div>
+                        <label style="font-size:12px;" data-i18n="cookieFieldName">Name</label>
+                        <input id="cookieEditName" type="text" placeholder="cookie_name" />
+
+                        <label style="font-size:12px;" data-i18n="cookieFieldValue">Value</label>
+                        <textarea id="cookieEditValue" rows="3" style="resize:vertical;"></textarea>
+
+                        <label style="font-size:12px;" data-i18n="cookieFieldDomain">Domain</label>
+                        <input id="cookieEditDomain" type="text" placeholder="example.com" />
+
+                        <label style="font-size:12px;" data-i18n="cookieFieldPath">Path</label>
+                        <input id="cookieEditPath" type="text" value="/" />
+
+                        <label style="font-size:12px;" data-i18n="cookieFieldSameSite">SameSite</label>
+                        <select id="cookieEditSameSite">
+                            <option value="unspecified" data-i18n="cookieSameSiteUnspecified">Unspecified</option>
+                            <option value="lax">Lax</option>
+                            <option value="strict">Strict</option>
+                            <option value="none">None</option>
+                        </select>
+
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <label style="display:flex; align-items:center; gap:6px;">
+                                <input id="cookieEditSecure" type="checkbox" />
+                                <span data-i18n="cookieFieldSecure">Secure</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px;">
+                                <input id="cookieEditHttpOnly" type="checkbox" />
+                                <span data-i18n="cookieFieldHttpOnly">HttpOnly</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px;">
+                                <input id="cookieEditSession" type="checkbox" checked />
+                                <span data-i18n="cookieFieldSession">Session</span>
+                            </label>
+                        </div>
+
+                        <label style="font-size:12px;" data-i18n="cookieFieldExpires">Expires</label>
+                        <input id="cookieEditExpires" type="datetime-local" disabled />
+
+                        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+                            <button class="outline" data-action="save-cookie-edit" data-i18n="save">Save</button>
+                            <button class="danger outline" data-action="delete-cookie-edit" data-i18n="delete">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button class="outline" data-action="close-cookie-manager" data-i18n="done">Done</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Settings Modal -->
     <div id="settingsModal" class="modal-overlay">
         <div class="modal-content">
@@ -1544,7 +1160,7 @@
                             Applies to new profiles and profiles without override.
                         </p>
                         <select id="defaultProxyConsistency" class="quick-switch-select no-drag"
-                            style="width:100%; margin-bottom:6px;" onchange="saveDefaultProxyConsistency(this.value)">
+                            style="width:100%; margin-bottom:6px;">
                             <option value="warn" selected data-i18n="proxyConsistencyWarn">Warn only</option>
                             <option value="autofix" data-i18n="proxyConsistencyAutofix">Auto-fix</option>
                             <option value="block" data-i18n="proxyConsistencyBlock">Block launch</option>
@@ -1572,8 +1188,7 @@
                                 <div class="toggle-switch"
                                     style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" id="enableSystemProxy"
-                                        style="opacity:0; width:0; height:0; position:absolute;"
-                                        onchange="handleDevToggle(this)">
+                                        style="opacity:0; width:0; height:0; position:absolute;">
                                     <div class="toggle-track"
                                         style="position:absolute; inset:0; background:var(--border); border-radius:12px; transition:0.3s;">
                                     </div>
@@ -1595,8 +1210,7 @@
                                 <div class="toggle-switch"
                                     style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" id="enableRemoteDebugging"
-                                        style="opacity:0; width:0; height:0; position:absolute;"
-                                        onchange="handleDevToggle(this)">
+                                        style="opacity:0; width:0; height:0; position:absolute;">
                                     <div class="toggle-track"
                                         style="position:absolute; inset:0; background:var(--border); border-radius:12px; transition:0.3s;">
                                     </div>
@@ -1620,8 +1234,7 @@
                                 <div class="toggle-switch"
                                     style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" id="enableCustomArgs"
-                                        style="opacity:0; width:0; height:0; position:absolute;"
-                                        onchange="handleDevToggle(this)">
+                                        style="opacity:0; width:0; height:0; position:absolute;">
                                     <div class="toggle-track"
                                         style="position:absolute; inset:0; background:var(--border); border-radius:12px; transition:0.3s;">
                                     </div>
@@ -1645,8 +1258,7 @@
                                 <div class="toggle-switch"
                                     style="position:relative; width:44px; height:24px; flex-shrink:0;">
                                     <input type="checkbox" id="enableApiServer"
-                                        style="opacity:0; width:0; height:0; position:absolute;"
-                                        onchange="handleDevToggle(this)">
+                                        style="opacity:0; width:0; height:0; position:absolute;">
                                     <div class="toggle-track"
                                         style="position:absolute; inset:0; background:var(--border); border-radius:12px; transition:0.3s;">
                                     </div>
@@ -1689,6 +1301,19 @@
                                     <span data-i18n="apiTokenHint">Send this token via HTTP header:</span>
                                     <code style="color:var(--accent);">X-GeekEZ-API-Token</code>
                                 </div>
+                                <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:10px;">
+                                    <div style="font-size:11px; color:var(--text-primary); font-weight:600; margin-bottom:6px;"
+                                        data-i18n="subFetchAllowlistTitle">Subscription Private Source Allowlist</div>
+                                    <div style="font-size:10px; color:var(--text-secondary); opacity:0.85; margin-bottom:8px; line-height:1.4;"
+                                        data-i18n="subFetchAllowlistHint">One host per line (or comma separated). Supports exact host/IP and *.domain wildcard.</div>
+                                    <textarea id="subscriptionPrivateAllowlist" rows="3" spellcheck="false"
+                                        style="width:100%; min-height:64px; resize:vertical; padding:8px 10px; border-radius:6px; border:1px solid var(--border); background:var(--input-bg); color:var(--text-primary); font-size:11px; font-family:Consolas, monospace;"
+                                        placeholder="127.0.0.1&#10;*.localhost&#10;intranet.example.com"></textarea>
+                                    <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+                                        <button class="outline" data-action="save-sub-private-allowlist"
+                                            style="padding:6px 14px; font-size:11px;" data-i18n="subFetchAllowlistSave">Save Allowlist</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1703,13 +1328,10 @@
 
                         <div style="display:flex; flex-direction:column; gap:12px;">
                             <!-- 方案5: 增强水印 (默认) -->
-                            <label
-                                style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; transition:0.2s;"
-                                onmouseover="this.style.borderColor='var(--accent)'"
-                                onmouseout="if(!this.querySelector('input').checked) this.style.borderColor='var(--border)'">
+                            <label data-watermark-option="enhanced"
+                                style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; transition:0.2s;">
                                 <input type="radio" name="watermarkStyle" value="enhanced"
-                                    style="margin-top:3px; width:auto; cursor:pointer;"
-                                    onchange="saveWatermarkStyle('enhanced')">
+                                    style="margin-top:3px; width:auto; cursor:pointer;">
                                 <div style="flex:1;">
                                     <div style="font-weight:bold; margin-bottom:5px; color:var(--text-primary);"
                                         data-i18n="watermarkEnhancedLabel">
@@ -1723,13 +1345,10 @@
                             </label>
 
                             <!-- 方案1: 顶部横幅 -->
-                            <label
-                                style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; transition:0.2s;"
-                                onmouseover="this.style.borderColor='var(--accent)'"
-                                onmouseout="if(!this.querySelector('input').checked) this.style.borderColor='var(--border)'">
+                            <label data-watermark-option="banner"
+                                style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; transition:0.2s;">
                                 <input type="radio" name="watermarkStyle" value="banner"
-                                    style="margin-top:3px; width:auto; cursor:pointer;"
-                                    onchange="saveWatermarkStyle('banner')">
+                                    style="margin-top:3px; width:auto; cursor:pointer;">
                                 <div style="flex:1;">
                                     <div style="font-weight:bold; margin-bottom:5px; color:var(--text-primary);"
                                         data-i18n="watermarkBannerLabel">
@@ -1821,6 +1440,7 @@
     <script src="languages.js"></script>
     <script src="locales/zh-CN.js"></script>
     <script src="i18n.js"></script>
+    <script src="proxy/testScheduler.js"></script>
     <script src="renderer.js"></script>
 </body>
 

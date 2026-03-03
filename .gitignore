@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+.context-snapshots/
+.claude/
 userData/
 BrowserProfiles/
 _Trash_Bin/
@@ -14,3 +16,4 @@ website/
 tools/
 *.log
 *.exe
+*temp_diff*.txt

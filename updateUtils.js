@@ -234,11 +234,129 @@ function validateUpdateDownloadUrl(url) {
   return u;
 }
 
+function normalizeDigestFileToken(input) {
+  if (typeof input !== 'string') return '';
+  let token = input.trim();
+  if (!token) return '';
+  token = token.replace(/^["']+|["']+$/g, '');
+  token = token.replace(/^[*]+/, '');
+  token = token.replace(/\\/g, '/');
+  const parts = token.split('/').filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : '';
+}
+
+function parseSha256DigestForAsset(text, assetName = '') {
+  if (typeof text !== 'string') return null;
+  const targetAsset = normalizeDigestFileToken(String(assetName || ''));
+  const candidates = [];
+  const lines = text.split(/\r?\n/g);
+
+  const pushCandidate = (hash, token = '') => {
+    const normalizedHash = String(hash || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(normalizedHash)) return;
+    candidates.push({
+      hash: normalizedHash,
+      file: normalizeDigestFileToken(String(token || '')),
+    });
+  };
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!line) continue;
+
+    // OpenSSL style:
+    // SHA2-256 (Xray-windows-64.zip) = <sha256>
+    let match = line.match(/^SHA2?-?256\s*\(([^)]+)\)\s*=\s*([a-f0-9]{64})$/i);
+    if (match) {
+      pushCandidate(match[2], match[1]);
+      continue;
+    }
+
+    // GNU sha256sum style:
+    // <sha256>  Xray-windows-64.zip
+    match = line.match(/^([a-f0-9]{64})\s+\*?(.+)$/i);
+    if (match) {
+      pushCandidate(match[1], match[2]);
+      continue;
+    }
+
+    // Bare hash line:
+    // SHA2-256=<sha256> or plain <sha256>
+    match = line.match(/^SHA2?-?256\s*=\s*([a-f0-9]{64})$/i);
+    if (match) {
+      pushCandidate(match[1], '');
+      continue;
+    }
+    match = line.match(/^([a-f0-9]{64})$/i);
+    if (match) {
+      pushCandidate(match[1], '');
+      continue;
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  const resolveUniqueHash = (rows) => {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const unique = new Set(rows.map((row) => row.hash).filter(Boolean));
+    if (unique.size !== 1) return null;
+    return Array.from(unique)[0];
+  };
+
+  if (targetAsset) {
+    return resolveUniqueHash(candidates.filter((item) => item.file === targetAsset));
+  }
+
+  const namedRows = candidates.filter((item) => item.file);
+  if (namedRows.length > 0) {
+    return resolveUniqueHash(namedRows);
+  }
+
+  return resolveUniqueHash(candidates);
+}
+
+function isZipEntrySymlink(entry) {
+  const rawAttr = entry && entry.attr !== undefined ? Number(entry.attr) : NaN;
+  if (!Number.isFinite(rawAttr)) return false;
+  const unixMode = ((rawAttr >>> 0) >>> 16) & 0xffff;
+  const fileTypeBits = unixMode & 0o170000;
+  return fileTypeBits === 0o120000;
+}
+
+function assertNoSymlinkInTargetPath(destRoot, targetPath, rawName) {
+  const relative = path.relative(destRoot, targetPath);
+  if (!relative || relative === '.' || relative.startsWith('..')) return;
+  const parts = relative.split(path.sep).filter(Boolean);
+  let cursor = destRoot;
+  for (const part of parts) {
+    cursor = path.join(cursor, part);
+    if (!fs.existsSync(cursor)) continue;
+    let stats = null;
+    try {
+      stats = fs.lstatSync(cursor);
+    } catch (e) {
+      stats = null;
+    }
+    if (stats && typeof stats.isSymbolicLink === 'function' && stats.isSymbolicLink()) {
+      throw new Error(`Zip-Slip blocked: symlink path entry (${rawName})`);
+    }
+  }
+}
+
+function getZipEntryCollisionKey(targetPath) {
+  const normalizedPath = String(targetPath || '').replace(/\\/g, '/');
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    return normalizedPath.toLowerCase();
+  }
+  return normalizedPath;
+}
+
 function extractZip(zipPath, destDir, options = {}) {
   return new Promise((resolve, reject) => {
     try {
       const destRoot = path.resolve(destDir);
       const destPrefix = destRoot.endsWith(path.sep) ? destRoot : destRoot + path.sep;
+      const seenTargetPaths = new Set();
 
       try {
         fs.ensureDirSync(destRoot);
@@ -256,6 +374,7 @@ function extractZip(zipPath, destDir, options = {}) {
       if (entries.length > maxEntries) throw new Error('Zip contains too many entries');
 
       let totalBytes = 0;
+      let totalDeclaredBytes = 0;
       for (const entry of entries) {
         const rawName = entry && entry.entryName ? String(entry.entryName) : '';
         const name = rawName.replace(/\\/g, '/');
@@ -265,27 +384,37 @@ function extractZip(zipPath, destDir, options = {}) {
         if (name.startsWith('/') || name.startsWith('\\') || /^[a-zA-Z]:/.test(name)) {
           throw new Error(`Zip-Slip blocked: absolute path entry (${rawName})`);
         }
+        if (isZipEntrySymlink(entry)) {
+          throw new Error(`Zip-Slip blocked: symlink entry (${rawName})`);
+        }
 
         const targetPath = path.resolve(destRoot, name);
         if (!(targetPath === destRoot || targetPath.startsWith(destPrefix))) {
           throw new Error(`Zip-Slip blocked: path traversal entry (${rawName})`);
         }
+        const collisionKey = getZipEntryCollisionKey(targetPath);
+        if (seenTargetPaths.has(collisionKey)) {
+          throw new Error(`Zip-Slip blocked: duplicate path entry (${rawName})`);
+        }
+        seenTargetPaths.add(collisionKey);
 
         const isDir = !!entry.isDirectory || name.endsWith('/');
         if (!isDir && targetPath === destRoot) {
           throw new Error(`Zip-Slip blocked: invalid root file entry (${rawName})`);
         }
+        assertNoSymlinkInTargetPath(destRoot, targetPath, rawName);
         if (isDir) {
           try {
             fs.ensureDirSync(targetPath);
           } catch (e) {}
+          assertNoSymlinkInTargetPath(destRoot, targetPath, rawName);
           continue;
         }
 
-        const size = entry && entry.header && typeof entry.header.size === 'number' ? entry.header.size : null;
-        if (typeof size === 'number' && size > 0) {
-          totalBytes += size;
-          if (totalBytes > maxUncompressedBytes) {
+        const declaredSize = Number(entry && entry.header && entry.header.size);
+        if (Number.isFinite(declaredSize) && declaredSize > 0) {
+          totalDeclaredBytes += declaredSize;
+          if (declaredSize > maxUncompressedBytes || totalDeclaredBytes > maxUncompressedBytes) {
             throw new Error('Zip too large (uncompressed)');
           }
         }
@@ -293,8 +422,13 @@ function extractZip(zipPath, destDir, options = {}) {
         try {
           fs.ensureDirSync(path.dirname(targetPath));
         } catch (e) {}
+        assertNoSymlinkInTargetPath(destRoot, path.dirname(targetPath), rawName);
         const data = entry.getData ? entry.getData() : null;
         if (!Buffer.isBuffer(data)) throw new Error(`Failed to read zip entry: ${rawName}`);
+        totalBytes += data.length;
+        if (totalBytes > maxUncompressedBytes) {
+          throw new Error('Zip too large (uncompressed)');
+        }
         fs.writeFileSync(targetPath, data);
       }
 
@@ -314,6 +448,7 @@ module.exports = {
   downloadFile,
   extractZip,
   isZipFileHeader,
+  parseSha256DigestForAsset,
   sha256FileHex,
   validateUpdateDownloadUrl,
 };

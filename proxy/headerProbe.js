@@ -30,7 +30,12 @@ function agentFromProxyStr(proxyStr) {
   if (!proxyStr) return null;
   const s = normalizeProxyInputRaw(proxyStr);
   if (!s) return null;
-  if (s.startsWith('socks5://') || s.startsWith('socks://')) return new SocksProxyAgent(s.replace('socks://', 'socks5://'));
+  if (s.startsWith('socks5://') || s.startsWith('socks://')) {
+    const u = s
+      .replace(/^socks:\/\//i, 'socks5h://')
+      .replace(/^socks5:\/\//i, 'socks5h://');
+    return new SocksProxyAgent(u);
+  }
   if (s.startsWith('http://') || s.startsWith('https://')) return undefined; // not supported here
   return null;
 }

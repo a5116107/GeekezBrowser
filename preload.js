@@ -9,9 +9,9 @@ function assertTrustedUiOrigin() {
     throw new Error('Untrusted renderer origin');
 }
 
-function invokeTrusted(channel, data) {
+function invokeTrusted(channel, ...args) {
     assertTrustedUiOrigin();
-    return ipcRenderer.invoke(channel, data);
+    return ipcRenderer.invoke(channel, ...args);
 }
 
 const ALLOWED_INVOKE_CHANNELS = new Set([
@@ -33,6 +33,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'parse-subscription',
     'test-proxy-node',
     'export-selected-data',
+    'export-proxy-test-report',
 
     // export/import
     'get-export-profiles',
@@ -66,8 +67,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     launchProfile: (id, watermarkStyle, options = {}) => invokeTrusted('launch-profile', id, watermarkStyle, options),
     getSettings: () => invokeTrusted('get-settings'),
     saveSettings: (data) => invokeTrusted('save-settings', data),
-    exportProfile: (id) => invokeTrusted('export-profile', id),
-    importProfile: () => invokeTrusted('import-profile'),
     // 通用 invoke，用于 open-url 等
     invoke: (channel, data) => {
         assertTrustedUiOrigin();
@@ -77,6 +76,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return ipcRenderer.invoke(channel, data);
     },
     getRunningIds: () => invokeTrusted('get-running-ids'),
+    listRunningProfileSummaries: () => invokeTrusted('list-running-profile-summaries'),
+    stopOtherRunningProfiles: (keepId) => invokeTrusted('stop-other-running-profiles', keepId),
     runLeakCheck: (id) => invokeTrusted('run-leak-check', id),
     openPath: (p) => invokeTrusted('open-path', p),
     stopProfile: (id) => invokeTrusted('stop-profile', id),
@@ -85,7 +86,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getProfileLogSizes: (id) => invokeTrusted('get-profile-log-sizes', id),
     listProfileRotatedLogs: (id) => invokeTrusted('list-profile-rotated-logs', id),
     deleteProfileRotatedLog: (id, filename) => invokeTrusted('delete-profile-rotated-log', id, filename),
+    getProfileCookieSites: (id) => invokeTrusted('get-profile-cookie-sites', id),
+    getProfileCookies: (payload) => invokeTrusted('get-profile-cookies', payload),
+    setProfileCookie: (payload) => invokeTrusted('set-profile-cookie', payload),
+    deleteProfileCookie: (payload) => invokeTrusted('delete-profile-cookie', payload),
+    clearProfileCookiesSite: (payload) => invokeTrusted('clear-profile-cookies-site', payload),
+    exportProfileCookies: (payload) => invokeTrusted('export-profile-cookies', payload),
+    importProfileCookies: (payload) => invokeTrusted('import-profile-cookies', payload),
     onProfileStatus: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('profile-status', (event, data) => callback(data)); },
+    onLeakCheckFinished: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('leak-check-finished', (event, data) => callback(data)); },
     onProxyConsistencyWarning: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('proxy-consistency-warning', (event, data) => callback(data)); },
     // API events
     onRefreshProfiles: (callback) => { assertTrustedUiOrigin(); return ipcRenderer.on('refresh-profiles', () => callback()); },

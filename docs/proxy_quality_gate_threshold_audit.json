@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "version": "2026-02-06.v1",
+      "sha256": "34f2037d8a3786a1fc32b31d5e6515a35a038fb8a6570018acdece667a5973c9",
+      "releasedAt": "2026-02-06",
+      "owner": "Codex",
+      "changeType": "update",
+      "summary": "Enable threshold audit enforcement and lifecycle governance baseline."
+    }
+  ]
+}

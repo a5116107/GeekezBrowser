@@ -1,0 +1,81 @@
+name: Proxy Quality Gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/proxy-quality-gate.yml'
+      - 'proxy/**'
+      - 'security/**'
+      - 'scripts/**'
+      - 'main.js'
+      - 'preload.js'
+      - 'renderer.js'
+      - 'index.html'
+      - 'package.json'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/proxy-quality-gate.yml'
+      - 'proxy/**'
+      - 'security/**'
+      - 'scripts/**'
+      - 'main.js'
+      - 'preload.js'
+      - 'renderer.js'
+      - 'index.html'
+      - 'package.json'
+
+jobs:
+  proxy-quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies (skip postinstall side effects)
+        run: npm ci --ignore-scripts
+
+      - name: Verify threshold audit registry
+        env:
+          PROXY_GATE_THRESHOLDS_FILE: scripts/config/proxy_quality_gate.thresholds.json
+          PROXY_GATE_AUDIT_REGISTRY_FILE: docs/proxy_quality_gate_threshold_audit.json
+          PROXY_GATE_AUDIT_STRICT: "1"
+        run: npm run audit:proxy-gate-thresholds
+
+      - name: Run proxy quality gate
+        env:
+          PROXY_GATE_THRESHOLDS_FILE: scripts/config/proxy_quality_gate.thresholds.json
+          PROXY_GATE_AUDIT_REGISTRY_FILE: docs/proxy_quality_gate_threshold_audit.json
+        run: npm run quality-gate:proxy
+
+      - name: Publish gate summary
+        if: always()
+        shell: bash
+        run: |
+          SUMMARY_FILE=".context-snapshots/proxy-quality-gate/report.md"
+          if [[ -f "$SUMMARY_FILE" ]]; then
+            cat "$SUMMARY_FILE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Proxy Quality Gate Summary"
+              echo ""
+              echo "- report.md missing"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-quality-gate-artifacts
+          path: .context-snapshots/proxy-quality-gate
+          if-no-files-found: warn

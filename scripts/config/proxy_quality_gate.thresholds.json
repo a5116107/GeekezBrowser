@@ -1,0 +1,11 @@
+{
+  "version": "2026-02-06.v1",
+  "minProtocolCoverage": 1,
+  "minErrorCodeCoverage": 1,
+  "requireSlo": true,
+  "requireThresholdAudit": true,
+  "history": {
+    "enabled": true,
+    "maxEntries": 120
+  }
+}

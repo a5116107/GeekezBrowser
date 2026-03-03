@@ -6,6 +6,7 @@ const readline = require('readline'); // 引入 readline 用于控制光标
 const {
     extractZip,
     isZipFileHeader,
+    parseSha256DigestForAsset,
     sha256FileHex,
     validateUpdateDownloadUrl,
     UPDATE_MAX_DOWNLOAD_BYTES,
@@ -19,6 +20,14 @@ const PLATFORM_ARCH = `${os.platform()}-${os.arch()}`; // e.g., darwin-arm64, wi
 const BIN_DIR = path.join(RESOURCES_BIN, PLATFORM_ARCH);
 const GH_PROXY = 'https://gh-proxy.com/';
 const XRAY_API_URL = 'https://api.github.com/repos/XTLS/Xray-core/releases/latest';
+
+const XRAY_SETUP_ZIP_MAX_BYTES = 100 * 1024 * 1024; // 100MB
+const XRAY_SETUP_EXTRACT_MAX_ENTRIES = 200;
+const XRAY_SETUP_EXTRACT_MAX_BYTES = 140 * 1024 * 1024; // 140MB (uncompressed)
+const XRAY_SETUP_DGST_MAX_BYTES = 1 * 1024 * 1024; // 1MB
+const XRAY_SETUP_API_MAX_REDIRECTS = 5;
+const XRAY_SETUP_API_MAX_BYTES = 1 * 1024 * 1024; // 1MB
+const XRAY_SETUP_API_TIMEOUT_MS = 10_000;
 
 // --- 辅助工具：格式化字节 ---
 function formatBytes(bytes) {
@@ -88,54 +97,183 @@ function checkNetwork() {
     });
 }
 
+function validateXrayApiUrlOrThrow(inputUrl) {
+    if (typeof inputUrl !== 'string' || !inputUrl.trim()) throw new Error('Invalid URL');
+    const u = new URL(inputUrl.trim());
+    if (u.protocol !== 'https:') throw new Error('Only https URLs are allowed');
+
+    const allowedPathPrefix = '/repos/XTLS/Xray-core/';
+
+    if (u.hostname === 'api.github.com') {
+        if (!u.pathname.startsWith(allowedPathPrefix)) throw new Error('Xray API path not allowed');
+        return u;
+    }
+
+    if (u.hostname === 'gh-proxy.com') {
+        const raw = String(u.pathname || '').replace(/^\/+/, '');
+        if (!raw) throw new Error('Invalid gh-proxy URL (missing target URL)');
+        let decoded;
+        try {
+            decoded = decodeURIComponent(raw);
+        } catch (e) {
+            throw new Error('Invalid gh-proxy URL (bad encoding)');
+        }
+        if (!decoded.startsWith('https://')) throw new Error('Invalid gh-proxy URL (missing https target)');
+        const target = new URL(decoded);
+        if (target.protocol !== 'https:') throw new Error('Only https proxy targets are allowed');
+        if (target.hostname === 'gh-proxy.com') throw new Error('Nested gh-proxy targets are not allowed');
+        if (target.hostname !== 'api.github.com') throw new Error('Xray API proxy target not allowed');
+        if (!target.pathname.startsWith(allowedPathPrefix)) throw new Error('Xray API proxy path not allowed');
+        return u;
+    }
+
+    throw new Error(`Xray API host not allowed: ${u.hostname}`);
+}
+
+function isRetryableXrayApiNetworkError(err) {
+    const code = err && typeof err === 'object' ? err.code : '';
+    const message = err && typeof err === 'object' && typeof err.message === 'string' ? err.message : '';
+    if (message === 'Timeout') return true;
+    return [
+        'ECONNRESET',
+        'ECONNREFUSED',
+        'EAI_AGAIN',
+        'ENOTFOUND',
+        'ENETUNREACH',
+        'EHOSTUNREACH',
+        'ETIMEDOUT',
+    ].includes(String(code || '').toUpperCase());
+}
+
 // Fetch latest Xray version from GitHub API
-function getLatestXrayVersion(useProxy = false) {
-    return new Promise((resolve, reject) => {
-        const url = useProxy ? (GH_PROXY + XRAY_API_URL) : XRAY_API_URL;
-        const options = {
-            headers: { 'User-Agent': 'GeekEZ-Browser-Setup' },
-            timeout: 10000
-        };
+async function fetchLatestXrayVersionOnce(startUrl) {
+    let currentUrl = String(startUrl || '').trim();
+    if (!currentUrl) throw new Error('Invalid URL');
+    const headers = { 'User-Agent': 'GeekEZ-Browser-Setup', Accept: 'application/vnd.github+json' };
+    const redirectStatus = new Set([301, 302, 303, 307, 308]);
 
-        const makeRequest = (requestUrl) => {
-            const urlObj = new URL(requestUrl);
-            const reqOptions = {
-                hostname: urlObj.hostname,
-                path: urlObj.pathname + urlObj.search,
-                headers: { 'User-Agent': 'GeekEZ-Browser-Setup' },
-                timeout: 10000
-            };
+    for (let redirectCount = 0; redirectCount <= XRAY_SETUP_API_MAX_REDIRECTS; redirectCount++) {
+        const urlObj = validateXrayApiUrlOrThrow(currentUrl);
+        const res = await new Promise((resolve, reject) => {
+            const req = https.get(
+                {
+                    hostname: urlObj.hostname,
+                    path: urlObj.pathname + urlObj.search,
+                    headers,
+                },
+                resolve
+            );
+            req.on('error', reject);
+            req.setTimeout(XRAY_SETUP_API_TIMEOUT_MS, () => {
+                try { req.destroy(new Error('Timeout')); } catch (e) { }
+            });
+        });
 
-            https.get(reqOptions, (res) => {
-                // Handle redirects
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    makeRequest(res.headers.location);
+        const status = Number(res && res.statusCode);
+        const location = res && res.headers && res.headers.location ? String(res.headers.location) : '';
+
+        if (redirectStatus.has(status)) {
+            if (!location) {
+                res.resume();
+                throw new Error(`Redirect response missing location (HTTP ${status})`);
+            }
+            if (redirectCount >= XRAY_SETUP_API_MAX_REDIRECTS) {
+                res.resume();
+                throw new Error('Too many redirects');
+            }
+            const nextUrl = new URL(location, urlObj).toString();
+            res.resume();
+            currentUrl = nextUrl;
+            continue;
+        }
+
+        if (status !== 200) {
+            res.resume();
+            throw new Error(`GitHub API returned ${status}`);
+        }
+
+        const contentLength = parseInt(res.headers['content-length'], 10) || 0;
+        if (contentLength > 0 && contentLength > XRAY_SETUP_API_MAX_BYTES) {
+            res.resume();
+            throw new Error('GitHub API response too large');
+        }
+
+        const chunks = [];
+        let receivedBytes = 0;
+        await new Promise((resolve, reject) => {
+            res.on('data', (chunk) => {
+                receivedBytes += chunk.length;
+                if (receivedBytes > XRAY_SETUP_API_MAX_BYTES) {
+                    reject(new Error('GitHub API response too large'));
+                    try { res.destroy(); } catch (e) { }
                     return;
                 }
+                chunks.push(chunk);
+            });
+            res.on('end', resolve);
+            res.on('error', reject);
+        });
 
-                if (res.statusCode !== 200) {
-                    reject(new Error(`GitHub API returned ${res.statusCode}`));
-                    return;
-                }
+        const json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const tag = json && typeof json.tag_name === 'string' ? json.tag_name.trim() : '';
+        if (!tag) throw new Error('GitHub API response missing tag_name');
+        return tag; // e.g., "v24.12.31"
+    }
 
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        resolve(json.tag_name); // e.g., "v24.12.31"
-                    } catch (e) {
-                        reject(e);
-                    }
-                });
-            }).on('error', reject).on('timeout', () => reject(new Error('Timeout')));
-        };
+    throw new Error('Too many redirects');
+}
 
-        makeRequest(url);
-    });
+async function getLatestXrayVersionWithRoute(useProxy = false) {
+    const directUrl = XRAY_API_URL;
+    const proxyUrl = GH_PROXY + XRAY_API_URL;
+    const primary = useProxy ? proxyUrl : directUrl;
+    const fallback = useProxy ? directUrl : proxyUrl;
+
+    try {
+        const tag = await fetchLatestXrayVersionOnce(primary);
+        return { tag, routeUrl: primary };
+    } catch (err) {
+        if (!isRetryableXrayApiNetworkError(err)) throw err;
+        const tag = await fetchLatestXrayVersionOnce(fallback);
+        return { tag, routeUrl: fallback };
+    }
+}
+
+async function getLatestXrayVersion(useProxy = false) {
+    const result = await getLatestXrayVersionWithRoute(useProxy);
+    return result.tag;
 }
 
 // 支持进度显示的下载函数
+function isRetryableXrayDownloadNetworkError(err) {
+    const code = err && typeof err === 'object' ? err.code : '';
+    const message = err && typeof err === 'object' && typeof err.message === 'string' ? err.message : '';
+    if (/timeout/i.test(message)) return true;
+    if (/socket hang up/i.test(message)) return true;
+    return [
+        'ECONNRESET',
+        'ECONNREFUSED',
+        'EAI_AGAIN',
+        'ENOTFOUND',
+        'ENETUNREACH',
+        'EHOSTUNREACH',
+        'ETIMEDOUT',
+    ].includes(String(code || '').toUpperCase());
+}
+
+async function downloadFileWithFallback(primaryUrl, fallbackUrl, dest, label = 'Downloading', options = {}) {
+    try {
+        await downloadFile(primaryUrl, dest, label, options);
+        return String(primaryUrl);
+    } catch (err) {
+        if (!isRetryableXrayDownloadNetworkError(err)) throw err;
+        if (!fallbackUrl || String(fallbackUrl) === String(primaryUrl)) throw err;
+        try { console.log(`[Setup] Download retry via fallback route: ${label}`); } catch (e) { }
+        await downloadFile(fallbackUrl, dest, label, options);
+        return String(fallbackUrl);
+    }
+}
+
 function downloadFile(url, dest, label = 'Downloading', options = {}) {
     const maxRedirects = Number.isInteger(options.maxRedirects) ? options.maxRedirects : UPDATE_MAX_REDIRECTS;
     const maxBytes = Number.isFinite(options.maxBytes) ? options.maxBytes : UPDATE_MAX_DOWNLOAD_BYTES;
@@ -236,10 +374,22 @@ function downloadFile(url, dest, label = 'Downloading', options = {}) {
     return doRequest(url, maxRedirects);
 }
 
-function parseSha256FromDgstText(text) {
-    if (typeof text !== 'string') return null;
-    const m = text.match(/SHA2-256=\s*([a-f0-9]{64})/i);
-    return m ? m[1].toLowerCase() : null;
+function digestContainsNamedAssets(text) {
+    if (typeof text !== 'string') return false;
+    // OpenSSL style: SHA2-256 (file.zip) = <hash>
+    if (/^SHA2?-?256\s*\([^)]+\)\s*=\s*[a-f0-9]{64}\s*$/im.test(text)) return true;
+    // sha256sum style: <hash>  file.zip
+    if (/^[a-f0-9]{64}\s+\*?.+\S/im.test(text)) return true;
+    return false;
+}
+
+function parseSha256FromDgstText(text, assetName = '') {
+    const scoped = parseSha256DigestForAsset(text, assetName);
+    if (scoped) return scoped;
+    // If digest contains named assets but does not match requested asset, reject (no fallback).
+    if (digestContainsNamedAssets(text)) return null;
+    // Fallback for bare-hash digests (asset-specific .dgst files sometimes omit filenames).
+    return parseSha256DigestForAsset(text, '');
 }
 
 async function main() {
@@ -255,9 +405,12 @@ async function main() {
 
         // Get latest Xray version from GitHub
         let xrayVersion;
+        let xrayVersionRouteUrl = isGlobal ? XRAY_API_URL : (GH_PROXY + XRAY_API_URL);
         try {
             console.log('🔍 Fetching latest Xray version...');
-            xrayVersion = await getLatestXrayVersion(!isGlobal);
+            const latestXray = await getLatestXrayVersionWithRoute(!isGlobal);
+            xrayVersion = latestXray.tag;
+            xrayVersionRouteUrl = latestXray.routeUrl || xrayVersionRouteUrl;
             console.log(`📦 Latest version: ${xrayVersion}`);
         } catch (e) {
             console.log('⚠️  Failed to get latest version, using fallback: v25.12.8');
@@ -265,12 +418,29 @@ async function main() {
         }
 
         const baseUrl = `https://github.com/XTLS/Xray-core/releases/download/${xrayVersion}/${xrayAsset}`;
-        const downloadUrl = isGlobal ? baseUrl : (GH_PROXY + baseUrl);
+        const directXrayZipUrl = baseUrl;
+        const proxyXrayZipUrl = GH_PROXY + baseUrl;
+        const preferDirectDownloadRoute = (() => {
+            try {
+                return new URL(xrayVersionRouteUrl).hostname === 'api.github.com';
+            } catch (e) {
+                return isGlobal;
+            }
+        })();
+        const primaryXrayZipUrl = preferDirectDownloadRoute ? directXrayZipUrl : proxyXrayZipUrl;
+        const fallbackXrayZipUrl = preferDirectDownloadRoute ? proxyXrayZipUrl : directXrayZipUrl;
 
         process.stdout.write(`⬇️  Downloading Xray (${xrayVersion})...\n`);
 
         // 这里的 Label 用于进度条前缀
-        await downloadFile(downloadUrl, zipPath, 'Xray Core');
+        const effectiveXrayZipUrl = await downloadFileWithFallback(primaryXrayZipUrl, fallbackXrayZipUrl, zipPath, 'Xray Core', { maxBytes: XRAY_SETUP_ZIP_MAX_BYTES });
+        const usedDirectRoute = (() => {
+            try {
+                return new URL(effectiveXrayZipUrl).hostname === 'github.com';
+            } catch (e) {
+                return false;
+            }
+        })();
 
         if (!fs.existsSync(zipPath)) throw new Error('Download failed: file not found');
         const zipStat = fs.statSync(zipPath);
@@ -281,15 +451,19 @@ async function main() {
 
         // Verify upstream sha256 digest (required)
         const dgstPath = path.join(BIN_DIR, 'xray.zip.dgst');
-        const dgstUrl = `${downloadUrl}.dgst`;
-        await downloadFile(dgstUrl, dgstPath, 'Xray Digest', { maxBytes: 1024 * 1024 });
+        const primaryXrayDgstUrl = `${usedDirectRoute ? directXrayZipUrl : proxyXrayZipUrl}.dgst`;
+        const fallbackXrayDgstUrl = `${usedDirectRoute ? proxyXrayZipUrl : directXrayZipUrl}.dgst`;
+        await downloadFileWithFallback(primaryXrayDgstUrl, fallbackXrayDgstUrl, dgstPath, 'Xray Digest', { maxBytes: XRAY_SETUP_DGST_MAX_BYTES });
         const dgstText = fs.readFileSync(dgstPath, 'utf8');
-        const expectedSha = parseSha256FromDgstText(dgstText);
+        const expectedSha = parseSha256FromDgstText(dgstText, xrayAsset);
         if (!expectedSha) throw new Error('Failed to parse upstream zip sha256 digest');
         if (zipSha.toLowerCase() !== expectedSha) throw new Error('Downloaded zip sha256 mismatch');
 
         console.log('📦 Extracting...');
-        await extractZip(zipPath, BIN_DIR);
+        await extractZip(zipPath, BIN_DIR, {
+            maxEntries: XRAY_SETUP_EXTRACT_MAX_ENTRIES,
+            maxUncompressedBytes: XRAY_SETUP_EXTRACT_MAX_BYTES,
+        });
         try { fs.unlinkSync(zipPath); } catch (e) { }
         try { fs.unlinkSync(dgstPath); } catch (e) { }
 

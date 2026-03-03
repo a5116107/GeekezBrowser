@@ -7,97 +7,111 @@
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-**专为电商运营和多账号管理打造的指纹隐匿浏览器**
+**面向电商与多账号运营场景的指纹隔离浏览器。**
 
-[🇺🇸 English](../README.md) | [📥 下载安装包](https://github.com/EchoHS/GeekezBrowser/releases)
+[English](../README.md) | [下载发布版](https://github.com/EchoHS/GeekezBrowser/releases)
 
 </div>
 
 ---
 
-## 📖 简介
+## 项目简介
 
-**GeekEZ Browser** 是一款基于 **Electron** 和 **Puppeteer** 构建的指纹浏览器，底层深度集成 **Xray-core**。
+**GeekEZ Browser** 基于 **Electron** 与 **Puppeteer** 构建，集成 **Xray-core** 作为网络与代理能力底座。
 
-它致力于解决跨境电商（TikTok, Amazon, Facebook, Shopee, etc.）的多账号防关联问题。通过深度伪装，完美通过 Cloudflare，Pixelscan 和 BrowserScan 的高强度检测。
+项目聚焦于多账号环境隔离、代理一致性与自动化管理，适用于 Amazon、TikTok、Facebook、Shopee 等跨平台运营场景。
 
-## 📸 软件截图
+## 界面截图
 
 <div align="center">
 
-<img src="Main Interface1.png" alt="主界面1" width="800">
-<img src="Main Interface2.png" alt="主界面2" width="800">
+<img src="Main Interface1.png" alt="主界面 1" width="800">
+<img src="Main Interface2.png" alt="主界面 2" width="800">
+
+*主界面 - 环境管理*
 
 </div>
 
-## ✨ 核心特性
+## 核心能力
 
-### 🛡️ 深度指纹隔离
-*   **硬件随机化**: 随机生成 **CPU 核心数** (4/8/12/16) 和 **设备内存** (4/8/16 GB)，显著增加指纹唯一性，每个环境都独一无二。
-*   **时区与地理位置伪装**:
-    - **自动 (Auto)** 模式：自动匹配代理 IP 所在地的时区和经纬度。
-    - 支持手动选择全球 50+ 城市进行精准定位。
-*   **语言伪装**:
-    - 支持 **60+ 种语言**，覆盖全球主要地区。
-    - 全面修改浏览器语言、HTTP 请求头和国际化 API。
-*   **WebRTC 物理阻断**: 强制使用 `disable_non_proxied_udp` 策略，物理切断本地 IP 泄露路径。
+### 指纹隔离
+- 环境级硬件参数随机化（CPU 核心数、内存）。
+- 时区与地理位置支持自动匹配与手动配置。
+- 语言配置支持浏览器层与请求头层对齐。
+- WebRTC 泄漏保护策略。
 
-### 🔗 全能网络引擎 (Xray-core)
-*   **全协议支持**: 完美支持 VMess, VLESS, Trojan, Shadowsocks (含 **SS-2022**), Socks5, HTTP。
-*   **高级传输层**: 支持 **REALITY**, **XHTTP**, **gRPC**, **mKCP**, WebSocket, H2 等复杂传输配置。
-*   **前置代理 (链式代理)**: 支持 `[本机] -> [前置代理] -> [环境代理] -> [目标网站]` 架构，隐藏真实 IP。
-*   **双栈支持**: 智能路由策略，完美支持 IPv4/IPv6 双栈节点。
+### 网络引擎（Xray-core）
+- 支持 VMess、VLESS、Trojan、Shadowsocks、Socks5、HTTP 等协议。
+- 支持 REALITY、XHTTP、gRPC、mKCP、WebSocket、H2 等传输形态。
+- 支持前置代理链路（本地 -> 前置代理 -> 目标节点 -> 网站）。
+- 兼容 IPv4 / IPv6 场景。
 
-### 🧩 工作流与管理
-*   **插件支持**: 支持导入解压后的 Chrome 扩展（如 MetaMask, AdBlock），并自动应用到所有环境。
-*   **标签系统**: 为环境添加彩色标签（如 "TikTok", "美国", "主号"），便于分组管理。
-*   **安全备注**: 使用 **动态水印** 在页面上方显示环境名称（如 `Profile-1`）。
-*   **稳定多开**: 支持同时运行多个环境，端口和进程完全独立互不干扰。
-*   **REST API 服务 (高级)**: 可选启用本地 HTTP API（`/api/*`）用于外部管理环境。请求需携带 `X-GeekEZ-API-Token`（设置 → Developer Features → API 可复制）。示例：`curl -H "X-GeekEZ-API-Token: <token>" http://localhost:12138/api/status`
-*   **远程调试端口 (高级)**: 可选开启外部 Puppeteer/DevTools 连接，支持自动化控制（默认关闭以降低风险）。
+### 管理与运维
+- 支持导入 Chrome 扩展到隔离环境。
+- 支持标签化环境管理。
+- 支持动态水印标识当前环境。
+- 支持多环境并行启动。
+- 支持可选本地 REST API（`/api/*`）用于自动化接入。
 
-## 🚀 快速开始
+## Cookie API（高级功能）
 
-### 方法 1: 下载安装包 (推荐)
-前往 [**Releases**](https://github.com/EchoHS/GeekezBrowser/releases) 页面下载适配您系统的安装包：
-*   **Windows**: `GeekEZ Browser-{version}-win-x64.exe`
-*   **macOS (ARM64)**: `GeekEZ Browser-{version}-mac-arm64.dmg`
-*   **macOS (Intel)**: `GeekEZ Browser-{version}-mac-x64.dmg`
-*   **Linux**: `GeekEZ Browser-{version}-linux-x64.AppImage`
+鉴权请求头：
 
-### 方法 2: 源码运行
+- `X-GeekEZ-API-Token`
 
-**前置要求**: 安装 Node.js (v16+) 和 Git。
+主要接口：
 
-1.  **克隆仓库**
-    ```bash
-    git clone https://github.com/EchoHS/GeekezBrowser.git
-    cd GeekezBrowser
-    ```
+- `GET /api/profiles/:idOrName/cookies/sites`
+- `GET /api/profiles/:idOrName/cookies?site=example.com`
+- `POST /api/profiles/:idOrName/cookies`
+- `POST /api/profiles/:idOrName/cookies/delete`
+- `POST /api/profiles/:idOrName/cookies/clear`
+- `GET /api/profiles/:idOrName/cookies/export?site=example.com`
+- `POST /api/profiles/:idOrName/cookies/import`（`mode=merge|replace`）
 
-2.  **安装依赖**
-    ```bash
-    npm install
-    ```
+参考资料：
 
-3.  **启动软件**
-    ```bash
-    npm start
-    ```
+- 示例文档：`docs/API_COOKIE_EXAMPLES.md`
+- Postman 集合：`docs/postman/GeekEZ_Cookie_API.postman_collection.json`
+- Postman 环境模板：`docs/postman/GeekEZ_Local.postman_environment.json`
+- Postman 说明：`docs/postman/README.md`
+- 冒烟命令：`npm run smoke:cookie-api`、`npm run smoke:cookie-api:newman`
 
-## 🛠 平台适用性指南
+## 订阅 URL 安全策略
 
-| 平台 | 安全评级 | 备注建议 |
-| :--- | :--- | :--- |
-| **TikTok** | ✅ 安全 | Canvas 噪音有效防止设备关联。核心在于使用**独享IP**。 |
-| **Facebook** | ✅ 安全 | 已彻底去除 WebDriver 和 Automation 特征。避免高频自动化操作。 |
-| **Shopee** | ✅ 安全 | 指纹稳定，适合卖家后台运营。建议一号一环境。 |
-| **Amazon (买家)** | ✅ 安全 | 隔离级别足以应对买家号、测评号的风控。 |
-| **Amazon (卖家)** | ✅ 安全 | **TLS 指纹安全**。可用于卖家主号，前提是必须使用**独享IP** 并固定环境。 |
+默认情况下，订阅拉取会阻止 `localhost` 与私网地址，并逐跳校验重定向链路。
 
-## 📦 打包发布
+若确需内网订阅源，可在以下位置配置白名单：
 
-如果您需要自己生成安装包：
+- 设置 -> 开发者功能 -> `subscriptionPrivateAllowlist`
+- 示例：`127.0.0.1`、`*.localhost`、`intranet.example.com`
+
+## 快速开始
+
+### 方式一：下载发布版（推荐）
+
+前往 [Releases](https://github.com/EchoHS/GeekezBrowser/releases) 下载：
+
+- Windows：`GeekEZ Browser-{version}-win-x64.exe`
+- macOS ARM64：`GeekEZ Browser-{version}-mac-arm64.dmg`
+- macOS Intel：`GeekEZ Browser-{version}-mac-x64.dmg`
+- Linux：`GeekEZ Browser-{version}-linux-x64.AppImage`
+
+### 方式二：源码运行
+
+前置依赖：
+
+- Node.js（v16+）
+- Git
+
+```bash
+git clone https://github.com/EchoHS/GeekezBrowser.git
+cd GeekezBrowser
+npm install
+npm start
+```
+
+## 打包构建
 
 ```bash
 # Windows
@@ -110,31 +124,41 @@ npm run build:mac
 npm run build:linux
 ```
 
-## 🔍 检测状态
+## 回归测试（无 GUI）
 
-- ✅ **Browserscan**: 全部通过
-- ✅ **Pixelscan**: 全部通过
-- ✅ **Cloudflare**: 通过机器人检测
+```bash
+npm run regression:ipc
+npm run regression:i18n
+npm run regression:all
+```
 
-## ❓ 常见问题 (FAQ)
+## 使用建议
 
-### macOS 提示 "安装包已损坏" 或 "无法打开"
+1. 敏感站点建议使用时区自动匹配。
+2. 地理位置配置应与代理出口尽量一致。
+3. 仅在需要外部自动化时启用远程调试端口。
 
-**解决方案**:
-1. 将 `GeekEZ Browser` 拖入 **应用程序 (Applications)** 文件夹。
-2. 打开终端 (Terminal)，输入以下命令并回车（可能需要输入密码）：
-   ```bash
-   sudo xattr -rd com.apple.quarantine /Applications/GeekEZ\ Browser.app
-   ```
-3. 重新打开软件即可正常运行。
+## 常见问题
 
-## ⚠️ 免责声明
+### macOS 提示“应用已损坏”或“无法打开”
 
-本软件仅供技术研究与教育使用。开发者不对因使用本软件导致的账号封禁、法律风险或经济损失承担任何责任。请用户严格遵守各平台的使用规则和当地法律法规。
+1. 将 `GeekEZ Browser` 拖入 **Applications**。
+2. 执行：
 
-## 📝 许可协议
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/GeekEZ\ Browser.app
+```
 
-本软件遵循 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) 许可协议。
+3. 重新打开应用。
 
-## 💬 交流群
-[*QQ群：1079216892*](tencent://groupwpa/?subcmd=all&uin=1079216892)
+## 免责声明
+
+本项目仅用于学习与研究。请在使用时遵守目标平台服务条款与相关法律法规，风险由使用者自行承担。
+
+## 许可证
+
+本项目使用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) 许可证。
+
+## 社区
+
+- QQ 群：`1079216892`
