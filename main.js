@@ -1991,14 +1991,77 @@ function wireProcessIoToConsole(proc, { traceId, engine }) {
     });
 }
 
-async function startProxyProcessForTest({ engine, proxyStr, localPort, configPath, traceId }) {
+function resolveStablePreProxyForTest(settings, { targetProxyStr } = {}) {
+    const s = settings && typeof settings === 'object' ? settings : {};
+    if (!s.enablePreProxy) return { config: null, meta: { enabled: false } };
+    const list = Array.isArray(s.preProxies) ? s.preProxies : [];
+    const active = list.filter(p => p && p.enable !== false && p.url);
+    if (active.length === 0) return { config: null, meta: { enabled: false } };
+
+    const mode = String(s.mode || 'single');
+    const selectedId = s.selectedId ? String(s.selectedId) : '';
+    let target = null;
+
+    // Stable selection for tests: avoid Math.random in balance mode.
+    if (mode === 'single' || mode === 'balance') {
+        target = selectedId ? (active.find(p => String(p.id) === selectedId) || null) : null;
+        if (!target) target = active[0];
+    } else {
+        // failover (or unknown): first active
+        target = active[0];
+    }
+
+    if (!target || !target.url) return { config: null, meta: { enabled: false } };
+    const rawUrl = String(target.url || '').trim();
+    const normalizedUrl = normalizeProxyInputRaw(rawUrl);
+    const normalizedTarget = normalizeProxyInputRaw(targetProxyStr || '');
+    if (normalizedUrl && normalizedTarget && normalizedUrl === normalizedTarget) {
+        return {
+            config: null,
+            meta: {
+                enabled: false,
+                skipped: true,
+                skipReason: 'same_as_target',
+                mode,
+                selectedId,
+                targetId: target.id ? String(target.id) : '',
+                targetRemark: target.remark ? String(target.remark) : '',
+            }
+        };
+    }
+
+    return {
+        config: { preProxies: [target] },
+        meta: {
+            enabled: true,
+            mode,
+            selectedId,
+            targetId: target.id ? String(target.id) : '',
+            targetRemark: target.remark ? String(target.remark) : '',
+        }
+    };
+}
+
+async function startProxyProcessForTest({ engine, proxyStr, localPort, configPath, traceId, preProxyConfig = null }) {
     if (engine === 'xray') {
         const { parseProxyLink } = require('./utils');
         const outbound = parseProxyLink(proxyStr, "proxy_test");
+        const outbounds = [];
+        if (preProxyConfig && Array.isArray(preProxyConfig.preProxies) && preProxyConfig.preProxies.length > 0) {
+            try {
+                const target = preProxyConfig.preProxies[0];
+                const preUrl = target && target.url ? String(target.url) : '';
+                if (preUrl && supportsEngineForProxy(normalizeProxyInputRaw(preUrl), 'xray')) {
+                    const preOutbound = parseProxyLink(preUrl, "proxy_pre");
+                    outbounds.push(preOutbound);
+                    outbound.proxySettings = { tag: "proxy_pre" };
+                }
+            } catch (e) { }
+        }
         const config = {
             log: { loglevel: DEBUG_PROXY_TEST ? "warning" : "none" },
             inbounds: [{ port: localPort, listen: "127.0.0.1", protocol: "socks", settings: { udp: true } }],
-            outbounds: [outbound, { protocol: "freedom", tag: "direct" }],
+            outbounds: [...outbounds, outbound, { protocol: "freedom", tag: "direct" }],
             routing: { rules: [{ type: "field", outboundTag: "proxy_test", port: "0-65535" }] }
         };
         await fs.writeJson(configPath, config);
@@ -2015,7 +2078,19 @@ async function startProxyProcessForTest({ engine, proxyStr, localPort, configPat
             throw err;
         }
         const spec = normalizeProxySpec(proxyStr);
-        const sbConfig = buildSingboxConfigFromProxySpec(spec, localPort);
+        let preProxySpec = null;
+        if (preProxyConfig && Array.isArray(preProxyConfig.preProxies) && preProxyConfig.preProxies.length > 0) {
+            try {
+                const target = preProxyConfig.preProxies[0];
+                const preUrl = target && target.url ? String(target.url) : '';
+                if (preUrl && supportsEngineForProxy(normalizeProxyInputRaw(preUrl), 'sing-box')) {
+                    preProxySpec = normalizeProxySpec(preUrl);
+                }
+            } catch (e) { }
+        }
+        const sbConfig = preProxySpec
+            ? buildSingboxConfigFromProxySpec(spec, localPort, { preProxySpec })
+            : buildSingboxConfigFromProxySpec(spec, localPort);
         try {
             if (DEBUG_PROXY_TEST) {
                 sbConfig.log = sbConfig.log && typeof sbConfig.log === 'object' ? sbConfig.log : {};
@@ -2053,6 +2128,16 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto', testOptions 
     });
     baseResult.testProfile = runtimeOptions.profile;
     baseResult.testOptions = { ...runtimeOptions };
+    let stablePreProxySelection = null;
+    try {
+        const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
+        stablePreProxySelection = resolveStablePreProxyForTest(settings, { targetProxyStr: normalizedProxyStr });
+        if (stablePreProxySelection && stablePreProxySelection.meta) {
+            baseResult.testOptions = { ...runtimeOptions, preProxy: stablePreProxySelection.meta };
+        }
+    } catch (e) {
+        baseResult.testOptions = { ...runtimeOptions, preProxy: { enabled: false, error: e && e.message ? String(e.message) : String(e) } };
+    }
 
     const finalizeAndReturn = (patch = {}) => {
         const merged = finalizeProxyTestResult(baseResult, patch);
@@ -2191,8 +2276,30 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto', testOptions 
                     steps: [],
                 };
 
-                const engineStartStep = createStep('engine_start', { engine, configPath: tempConfigPath });
-                const started = await startProxyProcessForTest({ engine, proxyStr: normalizedProxyStr, localPort: tempPort, configPath: tempConfigPath, traceId });
+                let effectivePreProxyConfig = null;
+                let preProxyMeta = null;
+                if (stablePreProxySelection && stablePreProxySelection.config && stablePreProxySelection.config.preProxies && stablePreProxySelection.config.preProxies[0]) {
+                    const target = stablePreProxySelection.config.preProxies[0];
+                    const preUrl = target && target.url ? normalizeProxyInputRaw(target.url) : '';
+                    if (preUrl && supportsEngineForProxy(preUrl, engine)) {
+                        effectivePreProxyConfig = stablePreProxySelection.config;
+                        preProxyMeta = { enabled: true, id: target.id ? String(target.id) : '', remark: target.remark ? String(target.remark) : '' };
+                    } else if (stablePreProxySelection.meta && stablePreProxySelection.meta.enabled) {
+                        preProxyMeta = {
+                            enabled: false,
+                            skipped: true,
+                            skipReason: preUrl ? 'engine_unsupported' : 'missing_url',
+                            id: target && target.id ? String(target.id) : '',
+                            remark: target && target.remark ? String(target.remark) : '',
+                        };
+                    }
+                } else if (stablePreProxySelection && stablePreProxySelection.meta && stablePreProxySelection.meta.skipped) {
+                    preProxyMeta = { ...stablePreProxySelection.meta };
+                }
+
+                const engineStartStep = createStep('engine_start', { engine, configPath: tempConfigPath, preProxy: preProxyMeta || undefined });
+                attempt.preProxy = preProxyMeta || undefined;
+                const started = await startProxyProcessForTest({ engine, proxyStr: normalizedProxyStr, localPort: tempPort, configPath: tempConfigPath, traceId, preProxyConfig: effectivePreProxyConfig });
                 proxyProcess = started && started.process ? started.process : null;
                 const resolvedEngine = started && started.engine ? started.engine : engine;
                 attempt.engine = resolvedEngine;
