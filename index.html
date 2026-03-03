@@ -822,6 +822,14 @@
                                 <input id="proxyTestMaxConcurrency" type="number" min="1" max="16">
                             </label>
                             <label class="proxy-strategy-item proxy-strategy-item--common">
+                                <span data-i18n="proxyStrategyEngine">Engine</span>
+                                <select id="proxyTestEngineHint">
+                                    <option value="auto" selected>Auto</option>
+                                    <option value="xray">Xray</option>
+                                    <option value="sing-box">sing-box</option>
+                                </select>
+                            </label>
+                            <label class="proxy-strategy-item proxy-strategy-item--common">
                                 <span data-i18n="proxyStrategyBatch">Batch</span>
                                 <input id="proxyTestBatchSize" type="number" min="10" max="200">
                             </label>

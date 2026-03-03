@@ -5371,6 +5371,7 @@ function applyProxyBatchStrategyToInputs(strategy) {
     const budgetEl = document.getElementById('proxyTestBudgetSec');
     const backoffEl = document.getElementById('proxyTestBackoffMs');
     const profileEl = document.getElementById('proxyTestProfile');
+    const engineHintEl = document.getElementById('proxyTestEngineHint');
     const probeTimeoutEl = document.getElementById('proxyTestProbeTimeoutSec');
     const ipTimeoutEl = document.getElementById('proxyTestIpTimeoutSec');
     const geoTimeoutEl = document.getElementById('proxyTestGeoTimeoutSec');
@@ -5384,6 +5385,7 @@ function applyProxyBatchStrategyToInputs(strategy) {
     if (budgetEl) budgetEl.value = String(Math.max(1, Math.round((target.budgetMs || 180000) / 1000)));
     if (backoffEl) backoffEl.value = String(target.backoffBaseMs || 0);
     if (profileEl) profileEl.value = normalizeProxyTestProfileValue(target.testProfile || 'standard');
+    if (engineHintEl) engineHintEl.value = normalizeProxyTestEngineHintValue(target.engineHint || 'auto');
     if (probeTimeoutEl) probeTimeoutEl.value = String(Math.max(1, Math.round((target.probeTimeoutMs || 7000) / 1000)));
     if (ipTimeoutEl) ipTimeoutEl.value = String(Math.max(1, Math.round((target.ipTimeoutMs || 8000) / 1000)));
     if (geoTimeoutEl) geoTimeoutEl.value = String(Math.max(1, Math.round((target.geoTimeoutMs || 8000) / 1000)));
@@ -5400,6 +5402,7 @@ function readProxyBatchStrategyFromInputs() {
     const budgetEl = document.getElementById('proxyTestBudgetSec');
     const backoffEl = document.getElementById('proxyTestBackoffMs');
     const profileEl = document.getElementById('proxyTestProfile');
+    const engineHintEl = document.getElementById('proxyTestEngineHint');
     const probeTimeoutEl = document.getElementById('proxyTestProbeTimeoutSec');
     const ipTimeoutEl = document.getElementById('proxyTestIpTimeoutSec');
     const geoTimeoutEl = document.getElementById('proxyTestGeoTimeoutSec');
@@ -5414,6 +5417,7 @@ function readProxyBatchStrategyFromInputs() {
         budgetMs: budgetEl ? Number(budgetEl.value) * 1000 : undefined,
         backoffBaseMs: backoffEl ? Number(backoffEl.value) : undefined,
         testProfile: profileEl ? normalizeProxyTestProfileValue(profileEl.value || '') : undefined,
+        engineHint: engineHintEl ? normalizeProxyTestEngineHintValue(engineHintEl.value || '') : undefined,
         probeTimeoutMs: probeTimeoutEl ? Number(probeTimeoutEl.value) * 1000 : undefined,
         ipTimeoutMs: ipTimeoutEl ? Number(ipTimeoutEl.value) * 1000 : undefined,
         geoTimeoutMs: geoTimeoutEl ? Number(geoTimeoutEl.value) * 1000 : undefined,

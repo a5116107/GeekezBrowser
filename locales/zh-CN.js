@@ -215,6 +215,7 @@ window.zhCN = {
     proxyStrategyStandard: "标准",
     proxyStrategyDeep: "深度",
     proxyStrategyConcurrency: "并发",
+    proxyStrategyEngine: "内核",
     proxyStrategyBatch: "批量",
     proxyStrategyBudget: "预算(秒)",
     proxyStrategyBackoff: "退避(毫秒)",

@@ -178,6 +178,7 @@ const enTranslations = {
     proxyStrategyStandard: "Standard",
     proxyStrategyDeep: "Deep",
     proxyStrategyConcurrency: "C",
+    proxyStrategyEngine: "Engine",
     proxyStrategyBatch: "Batch",
     proxyStrategyBudget: "Budget(s)",
     proxyStrategyBackoff: "Backoff(ms)",
