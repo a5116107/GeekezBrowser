@@ -4551,6 +4551,8 @@ function nodeMatchesSearch(node, query) {
         node && node.lastTestMsg ? node.lastTestMsg : '',
         node && node.ipInfo && node.ipInfo.ip ? node.ipInfo.ip : '',
         node && node.ipInfo && node.ipInfo.country ? node.ipInfo.country : '',
+        node && node.ipInfo && node.ipInfo.city ? node.ipInfo.city : '',
+        node && node.ipInfo && node.ipInfo.region ? node.ipInfo.region : '',
         node && node.ipInfo && node.ipInfo.timezone ? node.ipInfo.timezone : '',
     ].join(' ').toLowerCase();
     return groups.every((group) => group.some((token) => text.includes(token)));
@@ -7165,6 +7167,8 @@ function ensureGlobalActionEventsBound() {
                 case 'proxy-page-add': openProxyPageAddPanel(); break;
                 case 'proxy-page-cancel-add': closeProxyPageAddPanel(); break;
                 case 'proxy-page-save': run(saveProxyPageNode()); break;
+                case 'proxy-page-batch-import': run(openProxyBatchImport()); break;
+                case 'proxy-page-batch-delete': run(openProxyBatchDelete()); break;
                 case 'proxy-page-switch-group': switchProxyPageGroup(actionArg); break;
                 case 'set-proxy-page-filter': setProxyPageStatusFilter(actionArg); break;
                 case 'refresh-cookie-sites': run(refreshCookieManagerData({ keepSelected: true })); break;
@@ -7683,6 +7687,7 @@ function buildProxyPageDetail(node) {
     if (node.ipInfo) {
         if (node.ipInfo.ip) addDetailField(detail, 'IP', node.ipInfo.ip);
         if (node.ipInfo.country) addDetailField(detail, 'Country', node.ipInfo.country);
+        if (node.ipInfo.city) addDetailField(detail, 'City', node.ipInfo.city);
         if (node.ipInfo.timezone) addDetailField(detail, 'Timezone', node.ipInfo.timezone);
     }
 
@@ -10065,9 +10070,212 @@ function updateProxyModeUi(prefix) {
     }
 }
 
-function openAddModal() {
+const proxyBindNodeCache = { add: new Map(), edit: new Map() };
+
+async function ensureProxyBindSettingsLoaded() {
+    if (!globalSettings || typeof globalSettings !== 'object') {
+        try { globalSettings = await window.electronAPI.getSettings(); } catch (e) { globalSettings = {}; }
+    }
+    if (!globalSettings || typeof globalSettings !== 'object') globalSettings = {};
+    if (!Array.isArray(globalSettings.preProxies)) globalSettings.preProxies = [];
+    if (!Array.isArray(globalSettings.subscriptions)) globalSettings.subscriptions = [];
+    return globalSettings;
+}
+
+function getBoundProxyNodeMap(profiles) {
+    const map = new Map();
+    (profiles || []).forEach((p) => {
+        const id = p && p.proxyBindId ? String(p.proxyBindId) : '';
+        if (!id) return;
+        if (!map.has(id)) map.set(id, { profileId: p.id, name: p.name || id });
+    });
+    return map;
+}
+
+function getProxyNodeRegionLabel(node) {
+    const info = node && node.ipInfo ? node.ipInfo : null;
+    const country = info && info.country ? String(info.country) : '';
+    const city = info && info.city ? String(info.city) : '';
+    const region = info && info.region ? String(info.region) : '';
+    if (country && city) return `${country} / ${city}`;
+    if (country && region) return `${country} / ${region}`;
+    if (country) return country;
+    if (city) return city;
+    if (region) return region;
+    return tText('proxyRegionUnknown', 'Unknown');
+}
+
+function getProxyNodeGroupLabel(node) {
+    const groupId = String((node && node.groupId) || 'manual').trim() || 'manual';
+    if (groupId === 'manual') return t('groupManual') || 'Manual';
+    if (node && node.groupName) return String(node.groupName);
+    const subs = globalSettings && Array.isArray(globalSettings.subscriptions) ? globalSettings.subscriptions : [];
+    const sub = subs.find(s => s && s.id === groupId);
+    return sub && sub.name ? String(sub.name) : tText('proxyGroupUnknown', 'Group');
+}
+
+function buildProxyBindOptions(mode, { filterText = '', currentProfileId = '', selectedId = '', profiles = [] } = {}) {
+    const selectEl = document.getElementById(`${mode}ProxyBindSelect`);
+    if (!selectEl) return { nodeMap: new Map(), boundMap: new Map() };
+    const boundMap = getBoundProxyNodeMap(profiles);
+    const nodes = Array.isArray(globalSettings.preProxies) ? globalSettings.preProxies.slice() : [];
+    const filter = String(filterText || '').trim().toLowerCase();
+    const nodeMap = new Map();
+    const groups = new Map();
+
+    nodes.forEach((node) => {
+        if (!node || !node.id || !node.url) return;
+        const id = String(node.id);
+        const remark = getProxyNodeDisplayRemark(node);
+        const region = getProxyNodeRegionLabel(node);
+        const groupLabel = getProxyNodeGroupLabel(node);
+        const ip = node.ipInfo && node.ipInfo.ip ? String(node.ipInfo.ip) : '';
+        const country = node.ipInfo && node.ipInfo.country ? String(node.ipInfo.country) : '';
+        const city = node.ipInfo && node.ipInfo.city ? String(node.ipInfo.city) : '';
+        const regionRaw = node.ipInfo && node.ipInfo.region ? String(node.ipInfo.region) : '';
+        const search = [remark, node.url, ip, country, city, regionRaw, region, groupLabel].join(' ').toLowerCase();
+        const isSelected = selectedId && String(selectedId) === id;
+        if (filter && !search.includes(filter) && !isSelected) return;
+        const label = region || tText('proxyRegionUnknown', 'Unknown');
+        if (!groups.has(label)) groups.set(label, []);
+        groups.get(label).push({ id, node, remark, region, groupLabel, ip });
+        nodeMap.set(id, node);
+    });
+
+    selectEl.textContent = '';
+    const manualOpt = document.createElement('option');
+    manualOpt.value = '';
+    manualOpt.textContent = tText('proxyBindManualOption', 'Manual input (no binding)');
+    selectEl.appendChild(manualOpt);
+
+    if (selectedId && !nodeMap.has(String(selectedId))) {
+        const missingOpt = document.createElement('option');
+        missingOpt.value = String(selectedId);
+        missingOpt.textContent = tFormat('proxyBindMissingNode', 'Bound node missing ({id})', { id: String(selectedId).slice(0, 8) });
+        selectEl.appendChild(missingOpt);
+        nodeMap.set(String(selectedId), null);
+    }
+
+    if (groups.size === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = tText('proxyBindNoNodes', 'No available nodes');
+        opt.disabled = true;
+        selectEl.appendChild(opt);
+    } else {
+        const groupLabels = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
+        groupLabels.forEach((label) => {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = label;
+            const items = groups.get(label).sort((a, b) => a.remark.localeCompare(b.remark));
+            items.forEach((item) => {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                const bound = boundMap.get(item.id);
+                const boundByOther = bound && bound.profileId && bound.profileId !== currentProfileId;
+                let text = item.remark;
+                const metaParts = [];
+                if (item.ip) metaParts.push(item.ip);
+                if (item.groupLabel) metaParts.push(item.groupLabel);
+                if (metaParts.length) text += ` · ${metaParts.join(' · ')}`;
+                if (bound && boundByOther) {
+                    text += ` · ${tFormat('proxyBindUsedBy', 'Bound: {name}', { name: bound.name || bound.profileId })}`;
+                }
+                opt.textContent = text;
+                if (boundByOther) opt.disabled = true;
+                optgroup.appendChild(opt);
+            });
+            selectEl.appendChild(optgroup);
+        });
+    }
+
+    selectEl.value = selectedId ? String(selectedId) : '';
+    proxyBindNodeCache[mode] = nodeMap;
+    return { nodeMap, boundMap };
+}
+
+function applyProxyBindSelection(mode) {
+    const selectEl = document.getElementById(`${mode}ProxyBindSelect`);
+    const proxyEl = document.getElementById(`${mode}Proxy`);
+    const hintEl = document.getElementById(`${mode}ProxyBindHint`);
+    if (!selectEl || !proxyEl) return;
+    const selectedId = String(selectEl.value || '').trim();
+    const nodeMap = proxyBindNodeCache[mode] || new Map();
+    const node = selectedId ? nodeMap.get(selectedId) : null;
+    if (selectedId && node && node.url) {
+        proxyEl.value = String(node.url || '');
+        proxyEl.readOnly = true;
+        proxyEl.classList.add('proxy-bound-input');
+        if (hintEl) hintEl.textContent = tFormat('proxyBindSelectedHint', 'Bound to {name}', { name: getProxyNodeDisplayRemark(node) });
+    } else {
+        proxyEl.readOnly = false;
+        proxyEl.classList.remove('proxy-bound-input');
+        if (hintEl) hintEl.textContent = tText('proxyBindHint', 'Selecting a node binds it exclusively.');
+    }
+}
+
+function resolveProxyBindSelection(mode, profiles, currentProfileId) {
+    const selectEl = document.getElementById(`${mode}ProxyBindSelect`);
+    if (!selectEl) return { bindId: '', node: null };
+    const bindId = String(selectEl.value || '').trim();
+    if (!bindId) return { bindId: '', node: null };
+    const nodeMap = proxyBindNodeCache[mode] || new Map();
+    const node = nodeMap.get(bindId);
+    if (!node || !node.url) {
+        return { error: tFormat('proxyBindMissingError', 'Bound node not found ({id})', { id: bindId }) };
+    }
+    const boundMap = getBoundProxyNodeMap(profiles);
+    const bound = boundMap.get(bindId);
+    if (bound && bound.profileId && bound.profileId !== currentProfileId) {
+        return { error: tFormat('proxyBindInUse', 'Node already bound to {name}', { name: bound.name || bound.profileId }) };
+    }
+    return { bindId, node };
+}
+
+async function initProxyBindControls(mode, { profile } = {}) {
+    const filterEl = document.getElementById(`${mode}ProxyBindFilter`);
+    const selectEl = document.getElementById(`${mode}ProxyBindSelect`);
+    if (!filterEl || !selectEl) return;
+    await ensureProxyBindSettingsLoaded();
+    let profiles = window.__cachedProfiles;
+    if (!Array.isArray(profiles)) {
+        try { profiles = await window.electronAPI.getProfiles(); } catch (e) { profiles = []; }
+    }
+    const currentProfileId = profile && profile.id ? profile.id : '';
+    const initialSelected = profile && profile.proxyBindId ? String(profile.proxyBindId) : '';
+    const build = () => {
+        const chosen = selectEl.value || initialSelected;
+        buildProxyBindOptions(mode, {
+            filterText: filterEl.value,
+            currentProfileId,
+            selectedId: chosen,
+            profiles
+        });
+        applyProxyBindSelection(mode);
+    };
+    if (!filterEl.dataset.bindInit) {
+        filterEl.addEventListener('input', build);
+        filterEl.dataset.bindInit = '1';
+    }
+    if (!selectEl.dataset.bindInit) {
+        selectEl.addEventListener('change', () => applyProxyBindSelection(mode));
+        selectEl.dataset.bindInit = '1';
+    }
+    build();
+    if (initialSelected) {
+        selectEl.value = initialSelected;
+        applyProxyBindSelection(mode);
+    }
+}
+
+async function openAddModal() {
     document.getElementById('addName').value = '';
     document.getElementById('addProxy').value = '';
+    const addProxyInput = document.getElementById('addProxy');
+    if (addProxyInput) {
+        addProxyInput.readOnly = false;
+        addProxyInput.classList.remove('proxy-bound-input');
+    }
     document.getElementById('addTags').value = ''; // Clear tags
     document.getElementById('addTimezone').value = 'Auto (No Change)';
     const engineEl = document.getElementById('addProxyEngine');
@@ -10094,6 +10302,12 @@ function openAddModal() {
     const tunMtu = document.getElementById('addTunMtu');
     if (tunMtu) tunMtu.value = '';
     updateProxyModeUi('add');
+
+    const bindFilter = document.getElementById('addProxyBindFilter');
+    if (bindFilter) bindFilter.value = '';
+    const bindSelect = document.getElementById('addProxyBindSelect');
+    if (bindSelect) bindSelect.value = '';
+    await initProxyBindControls('add');
 
     document.getElementById('addModal').style.display = 'flex';
 }
@@ -10136,9 +10350,20 @@ async function saveNewProfile() {
     const language = getLanguageCode(languageInput);
 
     const tags = tagsStr.split(/[,，]/).map(s => s.trim()).filter(s => s);
+    const profiles = await window.electronAPI.getProfiles().catch(() => []);
+    const bindSelection = resolveProxyBindSelection('add', profiles, '');
+    if (bindSelection && bindSelection.error) {
+        return showAlert(bindSelection.error);
+    }
 
     // 分割多行代理链接
-    const proxyLines = proxyText.split('\n').map(l => l.trim()).filter(l => l);
+    let proxyLines = proxyText.split('\n').map(l => l.trim()).filter(l => l);
+    if (bindSelection && bindSelection.bindId && proxyLines.length > 1) {
+        return showAlert(tText('proxyBindBatchNotAllowed', 'Bound node does not support batch create. Use one node only.'));
+    }
+    if (bindSelection && bindSelection.bindId && bindSelection.node) {
+        proxyLines = [String(bindSelection.node.url || '').trim()].filter(l => l);
+    }
 
     if (proxyLines.length === 0) {
         return showAlert(t('inputReq'));
@@ -10152,7 +10377,8 @@ async function saveNewProfile() {
 
         if (!nameBase) {
             // 无名称输入，使用代理备注
-            name = getProxyRemark(proxyStr) || `Profile-${String(i + 1).padStart(2, '0')}`;
+            const boundRemark = bindSelection && bindSelection.node && bindSelection.node.remark ? String(bindSelection.node.remark) : '';
+            name = boundRemark || getProxyRemark(proxyStr) || `Profile-${String(i + 1).padStart(2, '0')}`;
         } else if (proxyLines.length === 1) {
             // 单个代理，使用输入名称
             name = nameBase;
@@ -10164,7 +10390,7 @@ async function saveNewProfile() {
         try {
             const consistencyPolicy = { enforce: true, onMismatch: proxyConsistency };
             const allowAutofix = { language: proxyConsistency === 'autofix', geo: proxyConsistency === 'autofix' };
-            await window.electronAPI.saveProfile({
+            const payload = {
                 name,
                 proxyStr,
                 tags,
@@ -10176,7 +10402,11 @@ async function saveNewProfile() {
                 proxyMode,
                 tun,
                 proxyPolicy: { autoLink: true, consistencyPolicy, allowAutofix }
-            });
+            };
+            if (bindSelection && bindSelection.bindId) {
+                payload.proxyBindId = bindSelection.bindId;
+            }
+            await window.electronAPI.saveProfile(payload);
             createdCount++;
         } catch (e) {
             console.error(`Failed to create profile ${name}:`, e);
@@ -10295,7 +10525,8 @@ async function openEditModal(id) {
         id,
         proxyStr: p.proxyStr,
         proxyEngine: p.proxyEngine || (p.fingerprint && p.fingerprint.proxyEngine) || 'xray',
-        proxyMode: p.proxyMode || 'app_proxy'
+        proxyMode: p.proxyMode || 'app_proxy',
+        proxyBindId: p.proxyBindId || ''
     };
     const fp = p.fingerprint || {};
     document.getElementById('editName').value = p.name;
@@ -10373,6 +10604,12 @@ async function openEditModal(id) {
         customArgsSection.style.display = 'none';
     }
 
+    const bindFilter = document.getElementById('editProxyBindFilter');
+    if (bindFilter) bindFilter.value = '';
+    const bindSelect = document.getElementById('editProxyBindSelect');
+    if (bindSelect) bindSelect.value = p.proxyBindId ? String(p.proxyBindId) : '';
+    await initProxyBindControls('edit', { profile: p });
+
     document.getElementById('editModal').style.display = 'flex';
 }
 function closeEditModal() { document.getElementById('editModal').style.display = 'none'; currentEditId = null; }
@@ -10388,6 +10625,17 @@ async function saveEditProfile() {
         const before = window.__geekez_edit_snapshot || { proxyStr: p.proxyStr, proxyEngine: p.proxyEngine || 'xray', proxyMode: p.proxyMode || 'app_proxy' };
         p.name = document.getElementById('editName').value;
         p.proxyStr = document.getElementById('editProxy').value;
+        const bindSelection = resolveProxyBindSelection('edit', profiles, p.id);
+        if (bindSelection && bindSelection.error) {
+            showAlert(bindSelection.error);
+            return;
+        }
+        if (bindSelection && bindSelection.bindId && bindSelection.node) {
+            p.proxyBindId = bindSelection.bindId;
+            p.proxyStr = String(bindSelection.node.url || '');
+        } else if (p.proxyBindId) {
+            delete p.proxyBindId;
+        }
         const proxyMode = document.getElementById('editProxyMode') ? document.getElementById('editProxyMode').value : (p.proxyMode || 'app_proxy');
         const editProxyEngine = document.getElementById('editProxyEngine');
         p.proxyMode = proxyMode === 'tun' ? 'tun' : 'app_proxy';
@@ -11772,7 +12020,8 @@ function renderProxyInspector() {
     const testedAtText = node.lastTestAt ? new Date(node.lastTestAt).toLocaleString() : '';
     const ip = node.ipInfo && node.ipInfo.ip ? String(node.ipInfo.ip) : '';
     const country = node.ipInfo && node.ipInfo.country ? String(node.ipInfo.country) : '';
-    const ipText = [ip, country].filter(Boolean).join(' · ');
+    const city = node.ipInfo && node.ipInfo.city ? String(node.ipInfo.city) : '';
+    const ipText = [ip, country, city].filter(Boolean).join(' · ');
 
     if (summaryEl) {
         summaryEl.textContent = '';
@@ -12183,10 +12432,11 @@ function renderProxyNodes() {
 
         if (metaStrip.childElementCount > 0) mid.appendChild(metaStrip);
 
-        if (isExpertMode && p.ipInfo && (p.ipInfo.country || p.ipInfo.timezone || p.ipInfo.ip)) {
+        if (isExpertMode && p.ipInfo && (p.ipInfo.country || p.ipInfo.city || p.ipInfo.timezone || p.ipInfo.ip)) {
             const parts = [];
             if (p.ipInfo.ip) parts.push(p.ipInfo.ip);
             if (p.ipInfo.country) parts.push(p.ipInfo.country);
+            if (p.ipInfo.city) parts.push(p.ipInfo.city);
             if (p.ipInfo.timezone) parts.push(p.ipInfo.timezone);
             const text = parts.join(' · ');
 
@@ -12333,6 +12583,302 @@ async function savePreProxy() {
         globalSettings.preProxies.push({ id: Date.now().toString(), remark, url, enable: true, groupId: 'manual' });
     }
     resetProxyInput(); renderProxyNodes(); await window.electronAPI.saveSettings(globalSettings);
+}
+
+const PROXY_HTTP_PORTS = new Set(['80', '8080', '8081', '8000', '8001', '8008', '8010', '8118', '8123', '8880', '8888', '8889', '3128', '808', '82', '83']);
+const PROXY_HTTPS_PORTS = new Set(['443', '8443', '9443', '4443']);
+const PROXY_SOCKS_PORTS = new Set(['1080', '10808', '1081', '10888', '9050', '9051', '9052', '9053', '9054', '9055', '9060', '9061', '9062', '9065', '9066', '9070', '9080', '9090', '9100', '9150', '9191', '9200', '9250']);
+
+function detectProxySchemeFromPort(port) {
+    const p = String(port || '').trim();
+    if (PROXY_HTTP_PORTS.has(p)) return 'http';
+    if (PROXY_HTTPS_PORTS.has(p)) return 'https';
+    if (PROXY_SOCKS_PORTS.has(p)) return 'socks5';
+    return 'socks5';
+}
+
+function parseProxyHostPort(input) {
+    const text = String(input || '').trim();
+    const m = text.match(/^([^\s:]+):(\d{2,5})$/);
+    if (!m) return null;
+    return { host: m[1], port: m[2] };
+}
+
+function extractProxyHostPortForMatch(url) {
+    const text = String(url || '').trim();
+    if (!text) return '';
+    let hostPort = '';
+    const at = text.match(/@([^/?#]+)/);
+    if (at) hostPort = at[1];
+    if (!hostPort) {
+        const m = text.match(/:\/\/([^/?#]+)/);
+        if (m) hostPort = m[1];
+    }
+    if (!hostPort) return '';
+    if (hostPort.includes('@')) hostPort = hostPort.split('@').pop();
+    return hostPort.trim().toLowerCase();
+}
+
+function parseProxyBatchEntry(token, { defaultScheme = 'socks5', autoScheme = true } = {}) {
+    const text = String(token || '').trim();
+    if (!text) return null;
+    if (text.startsWith('#') || text.startsWith('//')) return null;
+    if (text.includes('://')) {
+        return {
+            raw: text,
+            url: text,
+            hostPort: extractProxyHostPortForMatch(text),
+            hasScheme: true,
+            scheme: String(text.split('://')[0] || '').toLowerCase(),
+        };
+    }
+    const hp = parseProxyHostPort(text);
+    if (!hp) return null;
+    const scheme = autoScheme ? detectProxySchemeFromPort(hp.port) : defaultScheme;
+    const url = `${scheme}://${hp.host}:${hp.port}`;
+    return { raw: text, url, hostPort: `${hp.host}:${hp.port}`.toLowerCase(), hasScheme: false, scheme };
+}
+
+function normalizeProxyUrlKey(url) {
+    return String(url || '').trim().toLowerCase();
+}
+
+async function importProxyBatchFromText(rawText, { defaultScheme = 'socks5', autoScheme = true } = {}) {
+    const text = String(rawText || '').trim();
+    if (!text) {
+        showAlert(tText('proxyBatchImportEmpty', 'Paste at least one node (host:port)'));
+        return;
+    }
+    if (currentProxyGroup !== 'manual') {
+        showAlert(tText('proxyBatchImportManualOnly', 'Switch to Manual group before batch importing nodes.'));
+        return;
+    }
+    if (!globalSettings.preProxies) globalSettings.preProxies = [];
+    const existing = new Set(globalSettings.preProxies.map(p => normalizeProxyUrlKey(p && p.url)));
+
+    const candidates = [];
+    text.split(/\r?\n/).forEach((line) => {
+        const trimmed = String(line || '').trim();
+        if (!trimmed) return;
+        if (trimmed.startsWith('#') || trimmed.startsWith('//')) return;
+        const cleaned = trimmed.split('#')[0].trim();
+        if (!cleaned) return;
+        cleaned.split(/[,\s]+/).filter(Boolean).forEach((tok) => candidates.push(tok));
+    });
+
+    let added = 0;
+    let dup = 0;
+    let invalid = 0;
+
+    candidates.forEach((line, idx) => {
+        const entry = parseProxyBatchEntry(line, { defaultScheme, autoScheme });
+        if (!entry || !entry.url) {
+            invalid += 1;
+            return;
+        }
+        const key = normalizeProxyUrlKey(entry.url);
+        if (!key || existing.has(key)) {
+            dup += 1;
+            return;
+        }
+        existing.add(key);
+        const remark = getProxyRemark(entry.url) || tFormat('proxyNodeDefaultName', 'Node {index}', { index: idx + 1 });
+        globalSettings.preProxies.push({
+            id: `${Date.now()}-${added}-${Math.random().toString(16).slice(2, 8)}`,
+            remark,
+            url: entry.url,
+            enable: true,
+            groupId: 'manual',
+        });
+        added += 1;
+    });
+
+    await window.electronAPI.saveSettings(globalSettings);
+    renderProxyNodes();
+    updateToolbar();
+
+    if (added === 0 && invalid > 0) {
+        showAlert(tText('proxyBatchImportFailed', 'No valid nodes imported.'));
+        return;
+    }
+    const summary = tFormat('proxyBatchImportSummary', 'Imported {added} · Skipped {dup} duplicates · {invalid} invalid', {
+        added,
+        dup,
+        invalid,
+    });
+    showToast(summary, 2600);
+}
+
+async function openProxyBatchImport() {
+    if (currentProxyGroup !== 'manual') {
+        showAlert(tText('proxyBatchImportManualOnly', 'Switch to Manual group before batch importing nodes.'));
+        return;
+    }
+    showInput(tText('proxyBatchImportTitle', 'Batch import nodes (one per line)'), async (value) => {
+        await importProxyBatchFromText(value, { defaultScheme: 'socks5', autoScheme: true });
+    });
+    const inputEl = document.getElementById('inputModalValue');
+    if (inputEl) {
+        inputEl.value = '';
+        inputEl.placeholder = tText('proxyBatchImportPlaceholder', 'host:port or scheme://host:port (auto-detect if omitted)');
+        inputEl.rows = 8;
+    }
+}
+
+function collectProxyBatchMatches(entries, nodes) {
+    const idSet = new Set();
+    let unmatched = 0;
+    entries.forEach((entry) => {
+        let matched = false;
+        if (entry.hasScheme && entry.url) {
+            const key = normalizeProxyUrlKey(entry.url);
+            nodes.forEach((node) => {
+                if (normalizeProxyUrlKey(node && node.url) === key) {
+                    idSet.add(node.id);
+                    matched = true;
+                }
+            });
+        } else if (entry.hostPort) {
+            nodes.forEach((node) => {
+                const hp = extractProxyHostPortForMatch(node && node.url);
+                if (hp && hp === entry.hostPort) {
+                    idSet.add(node.id);
+                    matched = true;
+                }
+            });
+        }
+        if (!matched) unmatched += 1;
+    });
+    return { idSet, unmatched };
+}
+
+async function deleteProxyBatchFromText(rawText, { defaultScheme = 'socks5', autoScheme = true, scope = 'ask' } = {}) {
+    const text = String(rawText || '').trim();
+    if (!text) {
+        showAlert(tText('proxyBatchDeleteEmpty', 'Paste at least one node to delete.'));
+        return;
+    }
+    const candidates = [];
+    text.split(/\r?\n/).forEach((line) => {
+        const trimmed = String(line || '').trim();
+        if (!trimmed) return;
+        if (trimmed.startsWith('#') || trimmed.startsWith('//')) return;
+        const cleaned = trimmed.split('#')[0].trim();
+        if (!cleaned) return;
+        cleaned.split(/[,\s]+/).filter(Boolean).forEach((tok) => candidates.push(tok));
+    });
+    if (candidates.length === 0) {
+        showAlert(tText('proxyBatchDeleteEmpty', 'Paste at least one node to delete.'));
+        return;
+    }
+
+    const entries = candidates.map((line) => parseProxyBatchEntry(line, { defaultScheme, autoScheme })).filter(Boolean);
+    if (entries.length === 0) {
+        showAlert(tText('proxyBatchDeleteNone', 'No valid entries found.'));
+        return;
+    }
+
+    const nodes = Array.isArray(globalSettings.preProxies) ? globalSettings.preProxies.slice() : [];
+    const inGroup = nodes.filter((node) => isProxyNodeInCurrentGroup(node));
+    const currentMatch = collectProxyBatchMatches(entries, inGroup);
+    const allMatch = collectProxyBatchMatches(entries, nodes);
+
+    const runDelete = (match, scopeLabel) => {
+        if (!match || match.idSet.size === 0) return;
+        const confirmMsg = tFormat('proxyBatchDeleteConfirmScope', 'Delete {count} nodes in {scope}? (Unmatched {unmatched})', {
+            count: match.idSet.size,
+            unmatched: match.unmatched,
+            scope: scopeLabel
+        });
+        showConfirm(confirmMsg, async () => {
+            globalSettings.preProxies = nodes.filter((node) => !match.idSet.has(node.id));
+            scheduleSettingsSave(0);
+            renderProxyNodes();
+            updateToolbar();
+            const summary = tFormat('proxyBatchDeleteSummaryScope', 'Deleted {count} ({scope}) · Unmatched {unmatched}', {
+                count: match.idSet.size,
+                unmatched: match.unmatched,
+                scope: scopeLabel
+            });
+            showToast(summary, 2600);
+        });
+    };
+
+    const scopeCurrentLabel = tText('proxyBatchDeleteScopeCurrent', 'Current group');
+    const scopeAllLabel = tText('proxyBatchDeleteScopeAll', 'All groups');
+
+    if (scope === 'current') {
+        if (currentMatch.idSet.size === 0) {
+            showAlert(tText('proxyBatchDeleteNothing', 'No matching nodes found in current group.'));
+            return;
+        }
+        runDelete(currentMatch, scopeCurrentLabel);
+        return;
+    }
+    if (scope === 'all') {
+        if (allMatch.idSet.size === 0) {
+            showAlert(tText('proxyBatchDeleteNothingAll', 'No matching nodes found across all groups.'));
+            return;
+        }
+        runDelete(allMatch, scopeAllLabel);
+        return;
+    }
+
+    if (currentMatch.idSet.size === 0 && allMatch.idSet.size === 0) {
+        showAlert(tText('proxyBatchDeleteNothing', 'No matching nodes found in current group.'));
+        return;
+    }
+
+    if (currentMatch.idSet.size === 0 && allMatch.idSet.size > 0) {
+        const msg = tFormat('proxyBatchDeleteConfirmAllOnly', 'No matches in current group. Delete {count} nodes in all groups? (Unmatched {unmatched})', {
+            count: allMatch.idSet.size,
+            unmatched: allMatch.unmatched
+        });
+        showConfirm(msg, async () => {
+            globalSettings.preProxies = nodes.filter((node) => !allMatch.idSet.has(node.id));
+            scheduleSettingsSave(0);
+            renderProxyNodes();
+            updateToolbar();
+            const summary = tFormat('proxyBatchDeleteSummaryScope', 'Deleted {count} ({scope}) · Unmatched {unmatched}', {
+                count: allMatch.idSet.size,
+                unmatched: allMatch.unmatched,
+                scope: scopeAllLabel
+            });
+            showToast(summary, 2600);
+        });
+        return;
+    }
+
+    if (typeof showConfirmChoice === 'function' && allMatch.idSet.size > currentMatch.idSet.size) {
+        const msg = tFormat('proxyBatchDeleteScopePrompt', 'Delete matching nodes?\nCurrent group: {current} (Unmatched {currentUnmatched})\nAll groups: {all} (Unmatched {allUnmatched})', {
+            current: currentMatch.idSet.size,
+            currentUnmatched: currentMatch.unmatched,
+            all: allMatch.idSet.size,
+            allUnmatched: allMatch.unmatched
+        });
+        showConfirmChoice(msg, {
+            okText: tFormat('proxyBatchDeleteScopeCurrentBtn', 'Current ({count})', { count: currentMatch.idSet.size }),
+            altText: tFormat('proxyBatchDeleteScopeAllBtn', 'All ({count})', { count: allMatch.idSet.size }),
+            onConfirm: () => runDelete(currentMatch, scopeCurrentLabel),
+            onAlt: () => runDelete(allMatch, scopeAllLabel),
+            onCancel: () => { }
+        });
+        return;
+    }
+
+    runDelete(currentMatch, scopeCurrentLabel);
+}
+
+async function openProxyBatchDelete() {
+    showInput(tText('proxyBatchDeleteTitle', 'Batch delete nodes (one per line)'), async (value) => {
+        await deleteProxyBatchFromText(value, { defaultScheme: 'socks5', autoScheme: true });
+    });
+    const inputEl = document.getElementById('inputModalValue');
+    if (inputEl) {
+        inputEl.value = '';
+        inputEl.placeholder = tText('proxyBatchDeletePlaceholder', 'host:port or scheme://host:port (auto-detect if omitted)');
+        inputEl.rows = 8;
+    }
 }
 
 // --- Subscription Management ---

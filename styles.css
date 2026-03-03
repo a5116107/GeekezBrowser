@@ -1207,6 +1207,49 @@ button.danger:hover {
     padding-top: 10px;
 }
 
+.proxy-bind-block {
+    margin: 8px 0 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card-bg);
+}
+
+.proxy-bind-header {
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.proxy-bind-filter {
+    width: 100%;
+    margin-bottom: 6px;
+}
+
+.proxy-bind-select {
+    width: 100%;
+    min-height: 120px;
+    margin-bottom: 6px;
+    background: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+}
+
+.proxy-bind-select option:disabled {
+    color: var(--text-secondary);
+}
+
+.proxy-bind-hint {
+    font-size: 10px;
+    opacity: 0.6;
+}
+
+.proxy-bound-input {
+    background: rgba(128, 128, 128, 0.08);
+}
+
 #preProxyList {
     flex: 1;
     overflow-y: auto;

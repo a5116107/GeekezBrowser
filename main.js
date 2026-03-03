@@ -4384,6 +4384,7 @@ ipcMain.handle('save-profile', async (event, data) => {
         id: uuidv4(),
         name: data.name,
         proxyStr: data.proxyStr,
+        proxyBindId: data.proxyBindId || undefined,
         proxyEngine,
         proxyMode,
         tun,

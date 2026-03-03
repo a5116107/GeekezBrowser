@@ -159,6 +159,8 @@
                 <!-- Toolbar -->
                 <div class="proxy-page-toolbar">
                     <button data-action="proxy-page-add" data-i18n="add">+ Add</button>
+                    <button class="outline" data-action="proxy-page-batch-import" data-i18n="proxyBatchImport">Batch Import</button>
+                    <button class="danger" data-action="proxy-page-batch-delete" data-i18n="proxyBatchDelete">Batch Delete</button>
                     <button class="outline" data-action="test-current-group" data-i18n="btnTestGroup" id="proxyPageTestAllBtn">Test All</button>
                     <div class="proxy-page-toolbar-sep"></div>
                     <div class="profile-filters" id="proxyPageQuickFilters">
@@ -292,6 +294,12 @@
                     </div>
                     <div style="font-size:10px; opacity:0.6; margin-top:8px;" data-i18n="tunHint">Requires Administrator. Only one profile can run in TUN mode.</div>
                 </div>
+                <div class="proxy-bind-block">
+                    <div class="proxy-bind-header" data-i18n="proxyBindTitle">Bind Proxy Node</div>
+                    <input type="text" id="addProxyBindFilter" class="proxy-bind-filter no-drag" placeholder="Filter by country/city/remark" data-i18n-placeholder="proxyBindFilterPlaceholder" spellcheck="false" autocomplete="off">
+                    <select id="addProxyBindSelect" class="proxy-bind-select no-drag" size="6"></select>
+                    <div id="addProxyBindHint" class="proxy-bind-hint" data-i18n="proxyBindHint">Selecting a node binds it exclusively.</div>
+                </div>
                 <textarea id="addProxy" rows="4" placeholder="vmess://, ss://... (one per line for batch)"
                     spellcheck="false" autocomplete="off"></textarea>
                 <div style="font-size:10px; opacity:0.5; margin-bottom:8px;" data-i18n="batchHint">Multiple links =
@@ -398,6 +406,12 @@
                         <input type="number" id="editTunMtu" placeholder="1500" style="flex:1; margin-bottom:0;">
                     </div>
                     <div style="font-size:10px; opacity:0.6; margin-top:8px;" data-i18n="tunHint">Requires Administrator. Only one profile can run in TUN mode.</div>
+                </div>
+                <div class="proxy-bind-block">
+                    <div class="proxy-bind-header" data-i18n="proxyBindTitle">Bind Proxy Node</div>
+                    <input type="text" id="editProxyBindFilter" class="proxy-bind-filter no-drag" placeholder="Filter by country/city/remark" data-i18n-placeholder="proxyBindFilterPlaceholder" spellcheck="false" autocomplete="off">
+                    <select id="editProxyBindSelect" class="proxy-bind-select no-drag" size="6"></select>
+                    <div id="editProxyBindHint" class="proxy-bind-hint" data-i18n="proxyBindHint">Selecting a node binds it exclusively.</div>
                 </div>
                 <textarea id="editProxy" rows="4"></textarea>
 
