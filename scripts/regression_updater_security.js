@@ -340,7 +340,10 @@ async function main() {
   if (!mainText.includes('const normalizedPrimaryUrl = enforceValidatedXrayUpdateUrl(primaryUrl);')) {
     throw new Error('missing main-process updater primary-route validation');
   }
-  if (!mainText.includes('await downloadFile(normalizedPrimaryUrl, dest, options);')) {
+  if (
+    !mainText.includes('await downloadFile(normalizedPrimaryUrl, dest, options);')
+    && !mainText.includes('await downloadFile(normalizedPrimaryUrl, dest, downloadOptions);')
+  ) {
     throw new Error('missing main-process updater normalized primary download call');
   }
   if (!mainText.includes('return normalizedPrimaryUrl;')) {
@@ -352,7 +355,10 @@ async function main() {
   if (!mainText.includes('if (!normalizedFallbackUrl || normalizedFallbackUrl === normalizedPrimaryUrl) throw err;')) {
     throw new Error('missing main-process updater normalized fallback precondition guard');
   }
-  if (!mainText.includes('await downloadFile(normalizedFallbackUrl, dest, options);')) {
+  if (
+    !mainText.includes('await downloadFile(normalizedFallbackUrl, dest, options);')
+    && !mainText.includes('await downloadFile(normalizedFallbackUrl, dest, downloadOptions);')
+  ) {
     throw new Error('missing main-process updater normalized fallback download call');
   }
   if (!mainText.includes('return normalizedFallbackUrl;')) {

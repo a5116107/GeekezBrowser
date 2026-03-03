@@ -99,6 +99,7 @@ function downloadFile(url, dest, options = {}) {
   const maxRedirects = Number.isInteger(options.maxRedirects) ? options.maxRedirects : UPDATE_MAX_REDIRECTS;
   const maxBytes = Number.isFinite(options.maxBytes) ? options.maxBytes : UPDATE_MAX_DOWNLOAD_BYTES;
   const timeoutMs = Number.isInteger(options.timeoutMs) ? options.timeoutMs : UPDATE_DOWNLOAD_TIMEOUT_MS;
+  const agent = options && options.agent ? options.agent : undefined;
 
   const destDir = path.dirname(dest);
   try {
@@ -119,7 +120,7 @@ function downloadFile(url, dest, options = {}) {
       }
 
       const headers = { 'User-Agent': 'GeekEZ-Browser' };
-      const req = https.get(resolvedUrl, { headers }, (res) => {
+      const req = https.get(resolvedUrl, { headers, agent }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           if (redirectsLeft <= 0) {
             reject(new Error('Too many redirects'));

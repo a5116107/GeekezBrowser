@@ -6893,9 +6893,15 @@ function showConfirmChoice(msg, options) {
     if (okBtn) okBtn.textContent = (options && options.okText) ? options.okText : (t('confirm') || 'Confirm');
     confirmAltCallback = options && typeof options.onAlt === 'function' ? options.onAlt : null;
     confirmCancelCallback = options && typeof options.onCancel === 'function' ? options.onCancel : null;
-    document.getElementById('confirmMsg').innerText = msg;
-    document.getElementById('confirmModal').style.display = 'flex';
+    const msgEl = document.getElementById('confirmMsg');
     const modal = document.getElementById('confirmModal');
+    if (!msgEl || !modal) {
+        console.error('[ui] confirm modal elements missing', { hasMsg: !!msgEl, hasModal: !!modal });
+        showAlert(msg);
+        return;
+    }
+    msgEl.innerText = msg;
+    modal.style.display = 'flex';
     logModalState('confirmModal.showConfirmChoice', modal);
     requestAnimationFrame(() => logModalState('confirmModal.showConfirmChoice.raf', modal));
     setTimeout(() => logModalState('confirmModal.showConfirmChoice.t20', modal), 20);

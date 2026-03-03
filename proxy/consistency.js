@@ -16,6 +16,24 @@ function normalizeLocale(value) {
   return value.trim();
 }
 
+function normalizeCountryCode(value) {
+  if (!isNonEmptyString(value)) return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  if (/^[a-z]{2}$/i.test(raw)) return raw.toUpperCase();
+
+  const name = raw.toLowerCase();
+  const map = {
+    'united states': 'US',
+    'united kingdom': 'GB',
+    'germany': 'DE',
+    'france': 'FR',
+    'japan': 'JP',
+  };
+  return map[name] || null;
+}
+
 function shouldAutofix(onMismatch) {
   return onMismatch === 'autofix' || onMismatch === 'autoFix';
 }
@@ -38,22 +56,24 @@ function evaluateProxyFingerprintConsistency(profile, proxyTestResult) {
   const proxyCountry = isNonEmptyString(geo.country) ? geo.country : null;
   const fpLocale = normalizeLocale(cdp.locale) || normalizeLocale(fp.language);
   if (proxyCountry && fpLocale) {
-    // Very coarse heuristic: US/GB/DE/FR/JP common locales
+    // Very coarse heuristic: US/GB/DE/FR/JP common locales.
     const loc = fpLocale.toLowerCase();
-    const cc = proxyCountry.toLowerCase();
-    if (cc === 'united states' && !(loc.startsWith('en-us'))) {
+    const cc = normalizeCountryCode(proxyCountry)
+      || normalizeCountryCode(geo && geo.countryCode ? geo.countryCode : null)
+      || normalizeCountryCode(geo && geo.countryName ? geo.countryName : null);
+    if (cc === 'US' && !(loc.startsWith('en-us'))) {
       issues.push(issue('PROXY_LOCALE_MISMATCH', 'warn', `proxy country ${proxyCountry} but locale is ${fpLocale}`, 'Use a locale matching proxy country'));
     }
-    if (cc === 'united kingdom' && !(loc.startsWith('en-gb'))) {
+    if (cc === 'GB' && !(loc.startsWith('en-gb'))) {
       issues.push(issue('PROXY_LOCALE_MISMATCH', 'warn', `proxy country ${proxyCountry} but locale is ${fpLocale}`, 'Use a locale matching proxy country'));
     }
-    if (cc === 'germany' && !(loc.startsWith('de-de'))) {
+    if (cc === 'DE' && !(loc.startsWith('de-de'))) {
       issues.push(issue('PROXY_LOCALE_MISMATCH', 'warn', `proxy country ${proxyCountry} but locale is ${fpLocale}`, 'Use a locale matching proxy country'));
     }
-    if (cc === 'france' && !(loc.startsWith('fr-fr'))) {
+    if (cc === 'FR' && !(loc.startsWith('fr-fr'))) {
       issues.push(issue('PROXY_LOCALE_MISMATCH', 'warn', `proxy country ${proxyCountry} but locale is ${fpLocale}`, 'Use a locale matching proxy country'));
     }
-    if (cc === 'japan' && !(loc.startsWith('ja-jp'))) {
+    if (cc === 'JP' && !(loc.startsWith('ja-jp'))) {
       issues.push(issue('PROXY_LOCALE_MISMATCH', 'warn', `proxy country ${proxyCountry} but locale is ${fpLocale}`, 'Use a locale matching proxy country'));
     }
   }
@@ -78,18 +98,17 @@ function applyConsistencyPolicy({ profile, proxyTestResult, policy }) {
       updated.fingerprint.timezone = geo.timezone;
       updated.fingerprint.cdp.timezoneId = geo.timezone;
     }
-    if (geo && isNonEmptyString(geo.country)) {
-      updated.fingerprint.geo = geo.country;
-      if (!isNonEmptyString(updated.fingerprint.cdp.geoCountry)) updated.fingerprint.cdp.geoCountry = geo.country;
-    }
-
-    if (geo && isNonEmptyString(geo.country)) {
-      const cc = geo.country.trim().toLowerCase();
-      if (cc === 'united states') updated.fingerprint.cdp.locale = 'en-US';
-      if (cc === 'united kingdom') updated.fingerprint.cdp.locale = 'en-GB';
-      if (cc === 'germany') updated.fingerprint.cdp.locale = 'de-DE';
-      if (cc === 'france') updated.fingerprint.cdp.locale = 'fr-FR';
-      if (cc === 'japan') updated.fingerprint.cdp.locale = 'ja-JP';
+    if (geo && (isNonEmptyString(geo.countryCode) || isNonEmptyString(geo.country) || isNonEmptyString(geo.countryName))) {
+      const cc = normalizeCountryCode(geo.countryCode) || normalizeCountryCode(geo.country) || normalizeCountryCode(geo.countryName);
+      if (cc) {
+        updated.fingerprint.geo = cc;
+        if (!isNonEmptyString(updated.fingerprint.cdp.geoCountry)) updated.fingerprint.cdp.geoCountry = cc;
+        if (cc === 'US') updated.fingerprint.cdp.locale = 'en-US';
+        if (cc === 'GB') updated.fingerprint.cdp.locale = 'en-GB';
+        if (cc === 'DE') updated.fingerprint.cdp.locale = 'de-DE';
+        if (cc === 'FR') updated.fingerprint.cdp.locale = 'fr-FR';
+        if (cc === 'JP') updated.fingerprint.cdp.locale = 'ja-JP';
+      }
     }
   }
 

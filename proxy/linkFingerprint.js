@@ -1,5 +1,21 @@
-function normalizeCountry(value) {
-  return typeof value === 'string' && value.trim() ? value.trim().toUpperCase() : null;
+function normalizeCountryCode(value) {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  // ISO-3166 alpha-2
+  if (/^[a-z]{2}$/i.test(raw)) return raw.toUpperCase();
+
+  // Best-effort fallback for providers that return English country names.
+  const name = raw.toLowerCase();
+  const nameToCode = {
+    'united states': 'US',
+    'united kingdom': 'GB',
+    'germany': 'DE',
+    'france': 'FR',
+    'japan': 'JP',
+  };
+  return nameToCode[name] || raw.toUpperCase();
 }
 
 function isAutoTimezone(fp) {
@@ -35,7 +51,7 @@ function applyProxyGeoToFingerprint(profile, testResult, options = {}) {
 
   const geo = testResult && testResult.geo ? testResult.geo : null;
   const tz = geo && geo.timezone ? geo.timezone : null;
-  const country = geo && geo.country ? geo.country : null;
+  const countryCode = normalizeCountryCode(geo && (geo.countryCode || geo.country) ? String(geo.countryCode || geo.country) : '');
 
   const issues = [];
 
@@ -48,26 +64,26 @@ function applyProxyGeoToFingerprint(profile, testResult, options = {}) {
     }
   }
 
-  if (country) {
+  if (countryCode) {
     if (isAutoGeo(updated.fingerprint) || (onMismatch === 'autofix' && allowGeo)) {
-      updated.fingerprint.geo = country;
-      setCdpIfEmpty(updated.fingerprint.cdp, 'geoCountry', country);
-    } else if (updated.fingerprint.geo && normalizeCountry(updated.fingerprint.geo) !== normalizeCountry(country)) {
-      issues.push({ code: 'GEO_MISMATCH', message: `Fingerprint geo ${updated.fingerprint.geo} != proxy country ${country}` });
+      // Use country code for fingerprint geo and CDP geoCountry.
+      updated.fingerprint.geo = countryCode;
+      setCdpIfEmpty(updated.fingerprint.cdp, 'geoCountry', countryCode);
+    } else if (updated.fingerprint.geo && normalizeCountryCode(updated.fingerprint.geo) !== countryCode) {
+      issues.push({ code: 'GEO_MISMATCH', message: `Fingerprint geo ${updated.fingerprint.geo} != proxy country ${countryCode}` });
     }
   }
 
-  if (country) {
+  if (countryCode) {
     if (isAutoLanguage(updated.fingerprint) || (onMismatch === 'autofix' && allowLanguage)) {
-      const cc = normalizeCountry(country);
       const map = {
-        'UNITED STATES': 'en-US',
-        'UNITED KINGDOM': 'en-GB',
-        'GERMANY': 'de-DE',
-        'FRANCE': 'fr-FR',
-        'JAPAN': 'ja-JP',
+        US: 'en-US',
+        GB: 'en-GB',
+        DE: 'de-DE',
+        FR: 'fr-FR',
+        JP: 'ja-JP',
       };
-      const locale = map[cc] || null;
+      const locale = map[countryCode] || null;
       if (locale) {
         updated.fingerprint.language = locale;
         updated.fingerprint.cdp.locale = locale;
@@ -82,4 +98,4 @@ function applyProxyGeoToFingerprint(profile, testResult, options = {}) {
   return { ok: issues.length === 0 || onMismatch !== 'block', updatedProfile: updated, issues };
 }
 
-module.exports = { applyProxyGeoToFingerprint, normalizeCountry };
+module.exports = { applyProxyGeoToFingerprint, normalizeCountryCode };

@@ -32,7 +32,7 @@ const { createStep, finishStep, createProxyTestResultBase, appendStep, appendAtt
 const { normalizeProxyBatchTestStrategy } = require('./proxy/testScheduler');
 const { buildProxyTestReport, toProxyTestReportCsv } = require('./proxy/testReport');
 const { downloadFile, extractZip, isZipFileHeader, parseSha256DigestForAsset, sha256FileHex, validateUpdateDownloadUrl } = require('./updateUtils');
-const { parseHttpUrlOrThrow, normalizeAllowedPrivateHostList } = require('./security/urlPolicy');
+const { parseHttpUrlOrThrow, parseHttpFetchUrlOrThrow, normalizeAllowedPrivateHostList } = require('./security/urlPolicy');
 const { fetchWithUrlPolicy } = require('./security/fetchPolicy');
 
 const isDev = !app.isPackaged;
@@ -1614,6 +1614,10 @@ app.whenReady().then(async () => {
     setTimeout(() => { fs.emptyDir(TRASH_PATH).catch(() => { }); }, 10000);
 });
 
+app.on('before-quit', () => {
+    try { stopUpstreamPreProxyEngine('before-quit').catch(() => { }); } catch (e) { }
+});
+
 // IPC Handles
 ipcMain.handle('get-app-info', () => { return { name: app.getName(), version: app.getVersion() }; });
 
@@ -1699,19 +1703,328 @@ async function readResponseTextWithLimit(res, maxBytes) {
     return text;
 }
 
+// ============================================================================
+// Upstream (Pre-Proxy) for App Network Requests
+// - Used for subscription updates, update checks/downloads, etc.
+// - Must follow the same pre-proxy selection logic as profile chain proxy so
+//   latency and reachability stay consistent with user expectation.
+// ============================================================================
+const HTTP_REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+let upstreamProxyState = {
+    key: '',
+    engine: '',
+    localPort: 0,
+    configPath: '',
+    process: null,
+    nodeId: '',
+    nodeRemark: '',
+    nodeUrl: '',
+    lastProbeAt: 0,
+    lastProbeOk: false,
+    lastProbeError: '',
+};
+let upstreamProxyStartPromise = null;
+
+function isChildProcessAlive(proc) {
+    if (!proc) return false;
+    if (proc.killed) return false;
+    if (proc.exitCode !== null && proc.exitCode !== undefined) return false;
+    return true;
+}
+
+function resolveUpstreamPreProxyTarget(settings) {
+    if (!settings || settings.enablePreProxy !== true) return null;
+    const list = settings && Array.isArray(settings.preProxies) ? settings.preProxies : [];
+    const active = list.filter((p) => p && p.enable !== false && p.url);
+    if (active.length === 0) return null;
+
+    const mode = (settings && typeof settings.mode === 'string') ? settings.mode : 'single';
+    if (mode === 'single') {
+        const sel = settings && settings.selectedId ? String(settings.selectedId) : '';
+        return active.find((p) => p && String(p.id) === sel) || active[0];
+    }
+    if (mode === 'balance') {
+        return active[Math.floor(Math.random() * active.length)];
+    }
+    if (mode === 'failover') {
+        return active[0];
+    }
+    return active[0];
+}
+
+function buildUpstreamPreProxyKey(node) {
+    if (!node) return '';
+    const id = node.id != null ? String(node.id) : '';
+    const url = node.url != null ? normalizeProxyInputRaw(String(node.url)) : '';
+    if (!id || !url) return '';
+    return `${id}|${url}`;
+}
+
+async function stopUpstreamPreProxyEngine(reason = '') {
+    const prev = upstreamProxyState;
+    const hadState = !!(prev && (prev.key || prev.localPort || prev.process || prev.configPath));
+    upstreamProxyState = {
+        key: '',
+        engine: '',
+        localPort: 0,
+        configPath: '',
+        process: null,
+        nodeId: '',
+        nodeRemark: '',
+        nodeUrl: '',
+        lastProbeAt: 0,
+        lastProbeOk: false,
+        lastProbeError: '',
+    };
+
+    try {
+        const pid = prev && prev.process && prev.process.pid ? prev.process.pid : null;
+        if (pid) await forceKill(pid);
+    } catch (e) { }
+
+    try {
+        if (prev && prev.configPath && fs.existsSync(prev.configPath)) fs.unlinkSync(prev.configPath);
+    } catch (e) { }
+
+    if (reason && hadState) {
+        try { console.log('[upstream-proxy] stopped', reason); } catch (e) { }
+    }
+}
+
+async function ensureUpstreamPreProxyEngine(settings, forcedTarget = null) {
+    const target = forcedTarget || resolveUpstreamPreProxyTarget(settings);
+    if (!target) {
+        await stopUpstreamPreProxyEngine('disabled');
+        return null;
+    }
+
+    const key = buildUpstreamPreProxyKey(target);
+    if (!key) {
+        await stopUpstreamPreProxyEngine('invalid_target');
+        return null;
+    }
+
+    if (upstreamProxyState.key === key && isChildProcessAlive(upstreamProxyState.process) && upstreamProxyState.localPort) {
+        return { endpoint: `127.0.0.1:${upstreamProxyState.localPort}`, target };
+    }
+
+    // If another caller is starting, wait then re-check.
+    if (upstreamProxyStartPromise) {
+        try { await upstreamProxyStartPromise; } catch (e) { }
+        if (upstreamProxyState.key === key && isChildProcessAlive(upstreamProxyState.process) && upstreamProxyState.localPort) {
+            return { endpoint: `127.0.0.1:${upstreamProxyState.localPort}`, target };
+        }
+    }
+
+    upstreamProxyStartPromise = (async () => {
+        await stopUpstreamPreProxyEngine('switch');
+
+        const rawUrl = String(target.url || '');
+        const normalizedUrl = normalizeProxyInputRaw(rawUrl);
+        if (!normalizedUrl) {
+            const err = new Error('Upstream proxy URL is empty');
+            err.code = 'UPSTREAM_PROXY_EMPTY';
+            throw err;
+        }
+
+        const localPort = await getPort();
+        const configPath = path.join(app.getPath('userData'), `upstream_proxy_${localPort}.json`);
+        const traceId = `upstream-${localPort}`;
+
+        // Try a small engine plan to reduce "works in test but fails in app" drift.
+        const candidates = [];
+        try { candidates.push(inferProxyRuntimeEngine(normalizedUrl)); } catch (e) { }
+        try {
+            const plan = resolveProxyTestEngines(normalizedUrl, 'auto');
+            (plan && Array.isArray(plan.engines) ? plan.engines : []).forEach((e) => candidates.push(e));
+        } catch (e) { }
+        candidates.push('sing-box', 'xray');
+        const engines = Array.from(new Set(candidates.filter((e) => e === 'xray' || e === 'sing-box')));
+
+        let started = null;
+        let lastErr = null;
+        for (const engine of engines) {
+            try {
+                started = await startProxyProcessForTest({
+                    engine,
+                    proxyStr: rawUrl,
+                    localPort,
+                    configPath,
+                    traceId,
+                    preProxyConfig: null,
+                });
+                if (started && started.process) {
+                    upstreamProxyState = {
+                        key,
+                        engine,
+                        localPort,
+                        configPath,
+                        process: started.process,
+                        nodeId: target.id != null ? String(target.id) : '',
+                        nodeRemark: target.remark != null ? String(target.remark) : '',
+                        nodeUrl: normalizedUrl,
+                        lastProbeAt: 0,
+                        lastProbeOk: false,
+                        lastProbeError: '',
+                    };
+                    break;
+                }
+            } catch (e) {
+                lastErr = e;
+                try { if (started && started.process && started.process.pid) await forceKill(started.process.pid); } catch (ee) { }
+                started = null;
+            }
+        }
+
+        if (!started || !upstreamProxyState.localPort) {
+            const err = lastErr instanceof Error ? lastErr : new Error(String(lastErr || 'Failed to start upstream proxy engine'));
+            if (!err.code) err.code = 'UPSTREAM_PROXY_ENGINE_START_FAILED';
+            throw err;
+        }
+
+        // Give the engine a moment to boot before first request.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { endpoint: `127.0.0.1:${upstreamProxyState.localPort}`, target };
+    })();
+
+    try {
+        return await upstreamProxyStartPromise;
+    } finally {
+        upstreamProxyStartPromise = null;
+    }
+}
+
+function getHeaderFromIncomingMessage(res, name) {
+    const key = String(name || '').toLowerCase();
+    const headers = res && res.headers ? res.headers : null;
+    if (!headers || !key) return null;
+    const v = headers[key];
+    if (Array.isArray(v)) return v.join(', ');
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number') return String(v);
+    return null;
+}
+
+async function httpGetOnce(urlObj, { headers = {}, agent = undefined, signal = null, timeoutMs = 20_000 } = {}) {
+    const lib = urlObj && urlObj.protocol === 'http:' ? http : https;
+    return await new Promise((resolve, reject) => {
+        const req = lib.get(urlObj, { headers, agent }, (res) => resolve(res));
+        req.on('error', reject);
+        req.setTimeout(timeoutMs, () => {
+            try { req.destroy(new Error('Timeout')); } catch (e) { }
+        });
+
+        if (signal) {
+            if (signal.aborted) {
+                try { req.destroy(new Error('Aborted')); } catch (e) { }
+                return;
+            }
+            const onAbort = () => {
+                try { req.destroy(new Error('Aborted')); } catch (e) { }
+            };
+            try { signal.addEventListener('abort', onAbort, { once: true }); } catch (e) { }
+            req.on('close', () => {
+                try { signal.removeEventListener('abort', onAbort); } catch (e) { }
+            });
+        }
+    });
+}
+
+async function httpGetWithUrlPolicy(url, { headers = {}, agent = undefined, signal = null, timeoutMs = 20_000, maxRedirects = 5, urlPolicyOptions = {} } = {}) {
+    let current = await parseHttpFetchUrlOrThrow(url, urlPolicyOptions);
+    for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+        const res = await httpGetOnce(current, { headers, agent, signal, timeoutMs });
+        const status = Number(res && res.statusCode);
+        if (!HTTP_REDIRECT_STATUS.has(status)) return { res, finalUrl: current };
+
+        const location = res && res.headers && res.headers.location ? String(res.headers.location) : '';
+        res.resume();
+        if (!location) throw new Error(`Redirect response missing location (HTTP ${status})`);
+        if (redirectCount >= maxRedirects) throw new Error('Too many redirects');
+
+        const nextUrl = new URL(location, current).toString();
+        current = await parseHttpFetchUrlOrThrow(nextUrl, urlPolicyOptions);
+    }
+    throw new Error('Too many redirects');
+}
+
+async function readIncomingMessageTextWithLimit(res, maxBytes) {
+    const len = getHeaderFromIncomingMessage(res, 'content-length');
+    if (len && Number(len) > maxBytes) {
+        res.resume();
+        throw new Error(`Response too large (>${maxBytes} bytes)`);
+    }
+
+    const decoder = new TextDecoder('utf-8');
+    let received = 0;
+    let text = '';
+    for await (const chunk of res) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        received += buf.length;
+        if (received > maxBytes) {
+            try { res.destroy(); } catch (e) { }
+            throw new Error(`Response too large (>${maxBytes} bytes)`);
+        }
+        text += decoder.decode(buf, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+}
+
+async function probeUpstreamConnectivityCached(endpoint, { maxAgeMs = 30_000, timeoutMs = 6000, parallelism = 2 } = {}) {
+    const now = Date.now();
+    if (
+        upstreamProxyState
+        && upstreamProxyState.localPort
+        && upstreamProxyState.lastProbeAt
+        && (now - upstreamProxyState.lastProbeAt) < maxAgeMs
+    ) {
+        return upstreamProxyState.lastProbeOk
+            ? { ok: true, latencyMs: null, url: '', cached: true }
+            : { ok: false, latencyMs: null, url: '', error: upstreamProxyState.lastProbeError || 'Upstream probe failed (cached)', cached: true };
+    }
+
+    const agent = new SocksProxyAgent(`socks5h://${endpoint}`);
+    const result = await probeConnectivityThroughSocksAgent(agent, { timeoutMs, parallelism });
+    upstreamProxyState.lastProbeAt = now;
+    upstreamProxyState.lastProbeOk = !!(result && result.ok);
+    upstreamProxyState.lastProbeError = (result && result.error) ? String(result.error) : '';
+    return result;
+}
+
 ipcMain.handle('fetch-url', async (e, url) => {
     try {
         const urlPolicyOptions = await getFetchUrlPolicyOptions();
+        const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), 20_000);
         try {
-            const res = await fetchWithUrlPolicy(url, {
+            const upstream = await ensureUpstreamPreProxyEngine(settings);
+            if (!upstream) {
+                const res = await fetchWithUrlPolicy(url, {
+                    signal: ac.signal,
+                    maxRedirects: FETCH_MAX_REDIRECTS,
+                    ...urlPolicyOptions,
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return await readResponseTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
+            }
+            const agent = new SocksProxyAgent(`socks5h://${upstream.endpoint}`);
+            const { res } = await httpGetWithUrlPolicy(url, {
+                headers: {},
+                agent,
                 signal: ac.signal,
+                timeoutMs: 20_000,
                 maxRedirects: FETCH_MAX_REDIRECTS,
-                ...urlPolicyOptions,
+                urlPolicyOptions,
             });
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            return await readResponseTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
+            const status = Number(res && res.statusCode);
+            if (!status || status >= 400) {
+                res.resume();
+                throw new Error('HTTP ' + (status || '0'));
+            }
+            return await readIncomingMessageTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
         } finally {
             clearTimeout(timer);
         }
@@ -1722,25 +2035,52 @@ ipcMain.handle('fetch-url', async (e, url) => {
 ipcMain.handle('fetch-url-conditional', async (e, { url, etag, lastModified }) => {
     try {
         const urlPolicyOptions = await getFetchUrlPolicyOptions();
+        const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
         const headers = {};
         if (etag) headers['If-None-Match'] = String(etag);
         if (lastModified) headers['If-Modified-Since'] = String(lastModified);
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), 20_000);
         try {
-            const res = await fetchWithUrlPolicy(url, {
+            const upstream = await ensureUpstreamPreProxyEngine(settings);
+            if (!upstream) {
+                const res = await fetchWithUrlPolicy(url, {
+                    headers,
+                    signal: ac.signal,
+                    maxRedirects: FETCH_MAX_REDIRECTS,
+                    ...urlPolicyOptions,
+                });
+                if (res.status === 304) {
+                    return { notModified: true };
+                }
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const text = await readResponseTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
+                const newEtag = res.headers.get('etag');
+                const newLastModified = res.headers.get('last-modified');
+                return { notModified: false, content: text, etag: newEtag, lastModified: newLastModified };
+            }
+
+            const agent = new SocksProxyAgent(`socks5h://${upstream.endpoint}`);
+            const { res } = await httpGetWithUrlPolicy(url, {
                 headers,
+                agent,
                 signal: ac.signal,
+                timeoutMs: 20_000,
                 maxRedirects: FETCH_MAX_REDIRECTS,
-                ...urlPolicyOptions,
+                urlPolicyOptions,
             });
-            if (res.status === 304) {
+            const status = Number(res && res.statusCode);
+            if (status === 304) {
+                res.resume();
                 return { notModified: true };
             }
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const text = await readResponseTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
-            const newEtag = res.headers.get('etag');
-            const newLastModified = res.headers.get('last-modified');
+            if (!status || status >= 400) {
+                res.resume();
+                throw new Error('HTTP ' + (status || '0'));
+            }
+            const text = await readIncomingMessageTextWithLimit(res, FETCH_MAX_TEXT_BYTES);
+            const newEtag = getHeaderFromIncomingMessage(res, 'etag');
+            const newLastModified = getHeaderFromIncomingMessage(res, 'last-modified');
             return { notModified: false, content: text, etag: newEtag, lastModified: newLastModified };
         } finally {
             clearTimeout(timer);
@@ -2820,9 +3160,18 @@ async function testProxyNodeInternal(proxyStr, engineHint = 'auto', testOptions 
 
                 const ip = (geo && geo.ip) ? geo.ip : publicIp;
                 const geoOut = geo ? {
-                    country: geo.country, region: geo.region, city: geo.city,
-                    asn: geo.asn, isp: geo.isp, timezone: geo.timezone,
-                    latitude: geo.latitude, longitude: geo.longitude,
+                    ip: ip || null,
+                    // Keep "country" as country code, and provide optional countryName for UI/auto-link.
+                    country: geo.country,
+                    countryCode: geo.countryCode || geo.country || null,
+                    countryName: geo.countryName || null,
+                    region: geo.region,
+                    city: geo.city,
+                    asn: geo.asn,
+                    isp: geo.isp,
+                    timezone: geo.timezone,
+                    latitude: geo.latitude,
+                    longitude: geo.longitude,
                 } : null;
 
                 const ok = Boolean((connectivity && connectivity.ok) || ip);
@@ -3667,16 +4016,24 @@ async function stopProfileRuntimeByResolvedId(id, profileDir, preferredStatusTar
 }
 
 async function downloadFileWithRouteFallback(primaryUrl, fallbackUrl, dest, options = {}) {
+    const upstreamAgent = options && options.agent
+        ? options.agent
+        : await (async () => {
+            const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
+            const upstream = await ensureUpstreamPreProxyEngine(settings);
+            return upstream ? new SocksProxyAgent(`socks5h://${upstream.endpoint}`) : undefined;
+        })();
+    const downloadOptions = upstreamAgent ? { ...options, agent: upstreamAgent } : options;
     const normalizedPrimaryUrl = enforceValidatedXrayUpdateUrl(primaryUrl);
     try {
-        await downloadFile(normalizedPrimaryUrl, dest, options);
+        await downloadFile(normalizedPrimaryUrl, dest, downloadOptions);
         return normalizedPrimaryUrl;
     } catch (err) {
         if (!isRetryableXrayUpdateDownloadNetworkError(err)) throw err;
         const normalizedFallbackUrl = fallbackUrl ? enforceValidatedXrayUpdateUrl(fallbackUrl) : '';
         if (!normalizedFallbackUrl || normalizedFallbackUrl === normalizedPrimaryUrl) throw err;
         console.warn('[Update] Download retry via fallback route:', normalizedPrimaryUrl, '->', normalizedFallbackUrl);
-        await downloadFile(normalizedFallbackUrl, dest, options);
+        await downloadFile(normalizedFallbackUrl, dest, downloadOptions);
         return normalizedFallbackUrl;
     }
 }
@@ -6148,6 +6505,45 @@ ipcMain.handle('launch-profile', async (event, profileId, watermarkStyle, option
         }
     } catch (e) { }
 
+    // Upstream proxy gate: when chain pre-proxy is enabled, ensure the upstream proxy is alive.
+    // Rationale: subscription fetch/test latency should match real routed network, and a broken upstream
+    // should block launching profiles (user expectation: everything is proxy-driven).
+    if (shouldUsePreProxy) {
+        const preNode = (() => {
+            const fromConfig = finalPreProxyConfig && Array.isArray(finalPreProxyConfig.preProxies) ? finalPreProxyConfig.preProxies[0] : null;
+            if (fromConfig && fromConfig.url) return fromConfig;
+
+            const list = settings && Array.isArray(settings.preProxies) ? settings.preProxies : [];
+            const active = list.filter((p) => p && p.enable !== false && p.url);
+            if (active.length === 0) return null;
+
+            // Stable fallback when finalPreProxyConfig is null (e.g., skipped because it's the same as main proxy).
+            const mode = String(settings.mode || 'single');
+            const selectedId = settings.selectedId ? String(settings.selectedId) : '';
+            if (mode === 'single' || mode === 'balance') {
+                return selectedId ? (active.find((p) => p && String(p.id) === selectedId) || active[0]) : active[0];
+            }
+            return active[0];
+        })();
+        if (!preNode || !preNode.url) {
+            const err = new Error('Upstream proxy is enabled but no active upstream node is configured');
+            err.code = 'UPSTREAM_PROXY_NOT_CONFIGURED';
+            throw err;
+        }
+        const upstream = await ensureUpstreamPreProxyEngine(settings, preNode);
+        if (!upstream || !upstream.endpoint) {
+            const err = new Error('Failed to start upstream proxy engine');
+            err.code = 'UPSTREAM_PROXY_ENGINE_START_FAILED';
+            throw err;
+        }
+        const connectivity = await probeUpstreamConnectivityCached(upstream.endpoint, { timeoutMs: 6000, parallelism: 2, maxAgeMs: 30_000 });
+        if (!connectivity || !connectivity.ok) {
+            const err = new Error((connectivity && connectivity.error) ? String(connectivity.error) : 'Upstream proxy connectivity probe failed');
+            err.code = 'UPSTREAM_PROXY_CONNECTIVITY_FAILED';
+            throw err;
+        }
+    }
+
     try {
         const localPort = await getPort();
         const profileDir = resolvedProfile.profileDir;
@@ -6446,11 +6842,16 @@ async function fetchGitHubApiJsonOnce(url) {
     if (!currentUrl) throw new Error('Invalid URL');
     const headers = { 'User-Agent': 'GeekEZ-Browser', Accept: 'application/vnd.github+json' };
     const redirectStatus = new Set([301, 302, 303, 307, 308]);
+    const upstreamAgent = await (async () => {
+        const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : {};
+        const upstream = await ensureUpstreamPreProxyEngine(settings);
+        return upstream ? new SocksProxyAgent(`socks5h://${upstream.endpoint}`) : undefined;
+    })();
 
     for (let redirectCount = 0; redirectCount <= GITHUB_API_MAX_REDIRECTS; redirectCount++) {
         const urlObj = validateGitHubApiUrlOrThrow(currentUrl);
         const res = await new Promise((resolve, reject) => {
-            const req = https.get(urlObj, { headers }, resolve);
+            const req = https.get(urlObj, { headers, agent: upstreamAgent }, resolve);
             req.on('error', reject);
             req.setTimeout(GITHUB_API_TIMEOUT_MS, () => {
                 try { req.destroy(new Error('Timeout')); } catch (e) { }

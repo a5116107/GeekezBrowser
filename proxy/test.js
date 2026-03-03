@@ -35,9 +35,16 @@ async function probePublicIp(timeoutMs, agent) {
 
 async function probeGeo(timeoutMs, agent) {
   const ipapi = await fetchJson('https://ipapi.co/json/', timeoutMs, agent);
+  const countryCode = typeof ipapi.country === 'string'
+    ? ipapi.country
+    : (typeof ipapi.country_code === 'string' ? ipapi.country_code : null);
+  const countryName = typeof ipapi.country_name === 'string' ? ipapi.country_name : null;
   return {
     ip: typeof ipapi.ip === 'string' ? ipapi.ip : null,
-    country: typeof ipapi.country === 'string' ? ipapi.country : null,
+    // Keep "country" as the ISO-3166 alpha-2 code for compatibility.
+    country: countryCode,
+    countryCode,
+    countryName,
     region: typeof ipapi.region === 'string' ? ipapi.region : null,
     city: typeof ipapi.city === 'string' ? ipapi.city : null,
     asn: typeof ipapi.asn === 'string' ? ipapi.asn : null,
