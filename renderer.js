@@ -8026,6 +8026,7 @@ async function init() {
     ensureGlobalActionEventsBound();
     hoistGlobalModalsToBody();
     ensureSettingsInputEventsBound();
+    ensureAddProxySourceEventsBound();
     proxyCustomQueryPresets = loadProxyCustomQueryPresets();
     proxyPresetTrustPolicy = loadProxyPresetTrustPolicy();
     proxyPresetPinnedKeys = loadProxyPresetPinnedKeys();
@@ -10131,6 +10132,9 @@ function buildProxyBindOptions(mode, { filterText = '', currentProfileId = '', s
 
     nodes.forEach((node) => {
         if (!node || !node.id || !node.url) return;
+        if (node.enable === false) return;
+        // Hide known-bad nodes in binding selector (failed tests / invalid).
+        if (node.lastTestOk === false) return;
         const id = String(node.id);
         const remark = getProxyNodeDisplayRemark(node);
         const region = getProxyNodeRegionLabel(node);
@@ -10315,11 +10319,175 @@ async function openAddModal() {
     if (bindSelect) bindSelect.value = '';
     await initProxyBindControls('add');
 
+    // Proxy source (manual vs auto allocate)
+    const sourceSel = document.getElementById('addProxySource');
+    if (sourceSel) sourceSel.value = 'manual';
+    try { syncAddProxySourceUi(); } catch (e) { }
+
     document.getElementById('addModal').style.display = 'flex';
 }
 function closeAddModal() { document.getElementById('addModal').style.display = 'none'; }
 
+function isAddAutoAllocateEnabled() {
+    const sel = document.getElementById('addProxySource');
+    return !!(sel && sel.value === 'allocate');
+}
+
+function collectAllocatorCountries(nodes, { passOnly = true } = {}) {
+    const out = new Set();
+    (nodes || []).forEach((n) => {
+        if (!n || !n.ipInfo) return;
+        if (n.enable === false) return;
+        if (passOnly && n.lastTestOk !== true) return;
+        const c = n.ipInfo.country ? String(n.ipInfo.country).trim() : '';
+        if (c) out.add(c);
+    });
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+}
+
+function collectAllocatorCities(nodes, country, { passOnly = true } = {}) {
+    const want = String(country || '').trim().toLowerCase();
+    const out = new Set();
+    if (!want) return [];
+    (nodes || []).forEach((n) => {
+        if (!n || !n.ipInfo) return;
+        if (n.enable === false) return;
+        if (passOnly && n.lastTestOk !== true) return;
+        const c = n.ipInfo.country ? String(n.ipInfo.country).trim().toLowerCase() : '';
+        if (!c || c !== want) return;
+        const city = n.ipInfo.city ? String(n.ipInfo.city).trim() : '';
+        if (city) out.add(city);
+    });
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+}
+
+function fillDatalist(id, items) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = '';
+    (items || []).forEach((v) => {
+        const opt = document.createElement('option');
+        opt.value = String(v);
+        el.appendChild(opt);
+    });
+}
+
+function syncAddProxySourceUi() {
+    const manual = document.getElementById('addManualProxyBlock');
+    const alloc = document.getElementById('addAutoAllocBlock');
+    const isAlloc = isAddAutoAllocateEnabled();
+    if (manual) manual.style.display = isAlloc ? 'none' : '';
+    if (alloc) alloc.style.display = isAlloc ? '' : 'none';
+
+    if (isAlloc) {
+        try {
+            const nodes = globalSettings && Array.isArray(globalSettings.preProxies) ? globalSettings.preProxies : [];
+            fillDatalist('addAllocCountryList', collectAllocatorCountries(nodes, { passOnly: true }));
+            const countryEl = document.getElementById('addAllocCountry');
+            const cityEl = document.getElementById('addAllocCity');
+            const country = countryEl ? countryEl.value : '';
+            fillDatalist('addAllocCityList', collectAllocatorCities(nodes, country, { passOnly: true }));
+            if (cityEl && !String(cityEl.value || '').trim()) {
+                // keep empty by default
+            }
+        } catch (e) { }
+    }
+}
+
+function ensureAddProxySourceEventsBound() {
+    const sel = document.getElementById('addProxySource');
+    if (!sel || sel.dataset.bindInit) return;
+    sel.addEventListener('change', () => {
+        syncAddProxySourceUi();
+    });
+    sel.dataset.bindInit = '1';
+
+    const countryEl = document.getElementById('addAllocCountry');
+    if (countryEl && !countryEl.dataset.bindInit) {
+        countryEl.addEventListener('input', () => {
+            try {
+                const nodes = globalSettings && Array.isArray(globalSettings.preProxies) ? globalSettings.preProxies : [];
+                fillDatalist('addAllocCityList', collectAllocatorCities(nodes, countryEl.value, { passOnly: true }));
+            } catch (e) { }
+        });
+        countryEl.dataset.bindInit = '1';
+    }
+}
+
+async function allocateProfilesFromAddModal() {
+    await ensureProxyBindSettingsLoaded();
+    const namePrefix = document.getElementById('addName').value.trim();
+    const tagsStr = document.getElementById('addTags').value;
+    const tags = tagsStr.split(/[,，]/).map(s => s.trim()).filter(s => s);
+
+    const timezoneInput = document.getElementById('addTimezone').value;
+    const timezone = timezoneInput === 'Auto (No Change)' ? 'Auto' : timezoneInput;
+    const languageInput = document.getElementById('addLanguage').value;
+    const language = getLanguageCode(languageInput);
+
+    const proxyMode = document.getElementById('addProxyMode') ? document.getElementById('addProxyMode').value : 'app_proxy';
+    let proxyEngine = document.getElementById('addProxyEngine') ? document.getElementById('addProxyEngine').value : 'xray';
+    if (proxyMode === 'tun') proxyEngine = 'sing-box';
+    const tun = proxyMode === 'tun' ? {
+        auto_route: document.getElementById('addTunAutoRoute') ? document.getElementById('addTunAutoRoute').checked : true,
+        strict_route: document.getElementById('addTunStrictRoute') ? document.getElementById('addTunStrictRoute').checked : true,
+        dns_hijack: document.getElementById('addTunDnsHijack') ? document.getElementById('addTunDnsHijack').checked : true,
+        mtu: document.getElementById('addTunMtu') && document.getElementById('addTunMtu').value ? parseInt(document.getElementById('addTunMtu').value) : undefined
+    } : undefined;
+
+    const proxyConsistency = document.getElementById('addProxyConsistency') ? document.getElementById('addProxyConsistency').value : 'warn';
+
+    const country = document.getElementById('addAllocCountry') ? document.getElementById('addAllocCountry').value.trim() : '';
+    const city = document.getElementById('addAllocCity') ? document.getElementById('addAllocCity').value.trim() : '';
+    const countRaw = document.getElementById('addAllocCount') ? document.getElementById('addAllocCount').value : '1';
+    const count = Math.max(1, Math.min(200, parseInt(countRaw || '1') || 1));
+    const strategy = document.getElementById('addAllocStrategy') ? document.getElementById('addAllocStrategy').value : 'round_robin';
+    if (!country) return showAlert(tText('allocCountryRequired', 'Country is required for auto allocation.'));
+
+    const res = await window.electronAPI.invoke('allocate-proxy-profiles', {
+        namePrefix,
+        tags,
+        timezone,
+        language,
+        proxyMode: proxyMode === 'tun' ? 'tun' : 'app_proxy',
+        proxyEngine,
+        tun,
+        proxyConsistency,
+        country,
+        city,
+        count,
+        strategy,
+        allowPartial: true,
+        includeUntested: false,
+    });
+
+    if (!res || res.success === false) {
+        const err = formatResultError(res, tText('allocFailed', 'Auto allocation failed'));
+        showAlert((tText('allocFailed', 'Auto allocation failed') || 'Auto allocation failed') + (err.code ? ` [${err.code}]` : '') + ': ' + err.message);
+        return;
+    }
+
+    closeAddModal();
+    await loadProfiles();
+    const msg = tFormat('allocSuccess', 'Allocated {count} profiles (shortage {shortage})', {
+        count: res.createdCount || 0,
+        shortage: res.shortage || 0
+    });
+    showToast(msg, 2400);
+}
+
 async function saveNewProfile() {
+    // Auto allocate flow
+    if (isAddAutoAllocateEnabled()) {
+        try {
+            return await allocateProfilesFromAddModal();
+        } catch (e) {
+            const err = formatIpcError(e);
+            showAlert((tText('allocFailed', 'Auto allocation failed') || 'Auto allocation failed') + (err.code ? ` [${err.code}]` : '') + ': ' + err.message);
+            return;
+        }
+    }
+
     const nameBase = document.getElementById('addName').value.trim();
     const proxyText = document.getElementById('addProxy').value.trim();
     const proxyMode = document.getElementById('addProxyMode') ? document.getElementById('addProxyMode').value : 'app_proxy';

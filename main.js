@@ -1847,6 +1847,276 @@ ipcMain.handle('test-profile-proxy', async (e, input) => {
     return result;
 });
 
+function normalizeAllocatorStrategy(input) {
+    const token = String(input || '').trim().toLowerCase();
+    if (token === 'latency' || token === 'latency_priority' || token === 'latency-priority') return 'latency_priority';
+    return 'round_robin';
+}
+
+function normalizeRegionToken(input) {
+    if (input == null) return '';
+    const s = String(input).trim();
+    if (!s) return '';
+    if (s.length > 120) return s.slice(0, 120);
+    return s;
+}
+
+function buildRegionKey(country, city) {
+    const c = normalizeRegionToken(country);
+    const ci = normalizeRegionToken(city);
+    return ci ? `${c}::${ci}` : c;
+}
+
+function getNodeRegionInfo(node) {
+    const info = node && node.ipInfo && typeof node.ipInfo === 'object' ? node.ipInfo : null;
+    const country = info && info.country ? normalizeRegionToken(info.country) : '';
+    const city = info && info.city ? normalizeRegionToken(info.city) : '';
+    return { country, city };
+}
+
+function nodeMatchesRegion(node, country, city) {
+    const wantCountry = normalizeRegionToken(country);
+    const wantCity = normalizeRegionToken(city);
+    const got = getNodeRegionInfo(node);
+    if (!wantCountry) return false;
+    if (!got.country) return false;
+    if (got.country.toLowerCase() !== wantCountry.toLowerCase()) return false;
+    if (wantCity) {
+        if (!got.city) return false;
+        if (got.city.toLowerCase() !== wantCity.toLowerCase()) return false;
+    }
+    return true;
+}
+
+function getBoundProxyBindIdSet(profiles) {
+    const set = new Set();
+    (profiles || []).forEach((p) => {
+        const id = normalizeProxyBindId(p && p.proxyBindId);
+        if (id) set.add(id);
+    });
+    return set;
+}
+
+function buildAllocatorPool(settings, { country, city, includeUntested = false } = {}) {
+    const nodes = settings && Array.isArray(settings.preProxies) ? settings.preProxies : [];
+    return nodes.filter((n) => {
+        if (!n || !n.id || !n.url) return false;
+        if (n.enable === false) return false;
+        if (!nodeMatchesRegion(n, country, city)) return false;
+        // Allocation should not pick known-bad nodes. Default: PASS only.
+        if (n.lastTestOk !== true && !includeUntested) return false;
+        if (n.lastTestOk === false) return false;
+        return true;
+    });
+}
+
+function sortAllocatorPool(pool, strategy) {
+    const list = Array.isArray(pool) ? pool.slice() : [];
+    const st = normalizeAllocatorStrategy(strategy);
+    if (st === 'latency_priority') {
+        list.sort((a, b) => {
+            const la = (a && typeof a.latency === 'number' && a.latency >= 0) ? a.latency : Number.POSITIVE_INFINITY;
+            const lb = (b && typeof b.latency === 'number' && b.latency >= 0) ? b.latency : Number.POSITIVE_INFINITY;
+            if (la !== lb) return la - lb;
+            return String(a && a.id || '').localeCompare(String(b && b.id || ''));
+        });
+        return list;
+    }
+    // round_robin: stable sort by id (keeps order consistent across restarts).
+    list.sort((a, b) => String(a && a.id || '').localeCompare(String(b && b.id || '')));
+    return list;
+}
+
+function selectNodesRoundRobin(poolSorted, boundSet, { regionKey, cursorMap, requestedCount }) {
+    const picked = [];
+    const len = Array.isArray(poolSorted) ? poolSorted.length : 0;
+    if (len === 0) return { picked, cursorId: '' };
+
+    const lastIdRaw = cursorMap && typeof cursorMap === 'object' ? cursorMap[regionKey] : '';
+    const lastId = normalizeProxyBindId(lastIdRaw);
+    let start = 0;
+    if (lastId) {
+        const idx = poolSorted.findIndex((n) => n && String(n.id) === lastId);
+        if (idx >= 0) start = (idx + 1) % len;
+    }
+
+    for (let i = 0; i < len && picked.length < requestedCount; i++) {
+        const node = poolSorted[(start + i) % len];
+        const id = node && node.id ? String(node.id) : '';
+        if (!id) continue;
+        if (boundSet && boundSet.has(id)) continue;
+        picked.push(node);
+    }
+
+    const cursorId = picked.length > 0 && picked[picked.length - 1] && picked[picked.length - 1].id
+        ? String(picked[picked.length - 1].id)
+        : lastId;
+    return { picked, cursorId };
+}
+
+function selectNodesLatencyPriority(poolSorted, boundSet, requestedCount) {
+    const picked = [];
+    for (let i = 0; i < (poolSorted || []).length && picked.length < requestedCount; i++) {
+        const node = poolSorted[i];
+        const id = node && node.id ? String(node.id) : '';
+        if (!id) continue;
+        if (boundSet && boundSet.has(id)) continue;
+        picked.push(node);
+    }
+    return picked;
+}
+
+ipcMain.handle('allocate-proxy-profiles', async (e, input) => {
+    const payload = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};
+    const requestedCount = Math.max(1, Math.min(200, Math.round(Number(payload.count || payload.requestedCount || 1) || 1)));
+    const country = normalizeRegionToken(payload.country);
+    const city = normalizeRegionToken(payload.city);
+    const strategy = normalizeAllocatorStrategy(payload.strategy || payload.allocateStrategy);
+    const allowPartial = payload.allowPartial !== false;
+    const includeUntested = Boolean(payload.includeUntested);
+    if (!country) {
+        const err = new Error('Country is required');
+        err.code = 'ALLOC_COUNTRY_REQUIRED';
+        throw err;
+    }
+
+    const profiles = fs.existsSync(PROFILES_FILE) ? await fs.readJson(PROFILES_FILE) : [];
+    const settings = fs.existsSync(SETTINGS_FILE) ? await fs.readJson(SETTINGS_FILE) : { preProxies: [], subscriptions: [] };
+    const boundSet = getBoundProxyBindIdSet(profiles);
+
+    const pool = buildAllocatorPool(settings, { country, city, includeUntested });
+    const poolSorted = sortAllocatorPool(pool, strategy);
+    const regionKey = buildRegionKey(country, city);
+
+    const cursorMap = (settings && typeof settings === 'object' && settings.proxyAllocatorCursor && typeof settings.proxyAllocatorCursor === 'object')
+        ? settings.proxyAllocatorCursor
+        : {};
+
+    let picked = [];
+    let nextCursorId = normalizeProxyBindId(cursorMap[regionKey]);
+    if (strategy === 'round_robin') {
+        const out = selectNodesRoundRobin(poolSorted, boundSet, { regionKey, cursorMap, requestedCount });
+        picked = out.picked;
+        nextCursorId = out.cursorId;
+    } else {
+        picked = selectNodesLatencyPriority(poolSorted, boundSet, requestedCount);
+        // latency_priority doesn't need cursor; keep last cursor id for consistency.
+    }
+
+    const shortage = Math.max(0, requestedCount - picked.length);
+    if (picked.length === 0) {
+        return {
+            success: false,
+            code: 'ALLOC_NO_AVAILABLE_NODES',
+            error: 'No available nodes for this region (PASS-only).',
+            details: {
+                requestedCount,
+                country,
+                city,
+                strategy,
+                poolSize: poolSorted.length,
+                boundCount: boundSet.size,
+                includeUntested
+            }
+        };
+    }
+    if (!allowPartial && shortage > 0) {
+        return {
+            success: false,
+            code: 'ALLOC_INSUFFICIENT_NODES',
+            error: `Insufficient nodes: requested=${requestedCount} available=${picked.length}`,
+            details: { requestedCount, available: picked.length, shortage, country, city, strategy, includeUntested }
+        };
+    }
+
+    const namePrefixRaw = typeof payload.namePrefix === 'string' ? payload.namePrefix.trim() : '';
+    const tags = Array.isArray(payload.tags)
+        ? payload.tags.map(s => String(s || '').trim()).filter(Boolean)
+        : (typeof payload.tags === 'string' ? payload.tags.split(/[,，]/).map(s => s.trim()).filter(Boolean) : []);
+
+    const timezone = payload.timezone ? String(payload.timezone) : 'Auto';
+    const language = payload.language ? String(payload.language) : (payload.lang ? String(payload.lang) : null);
+
+    const proxyMode = (payload.proxyMode === 'tun') ? 'tun' : 'app_proxy';
+    let proxyEngine = proxyMode === 'tun' ? 'sing-box' : (payload.proxyEngine || 'xray');
+    const tun = (proxyMode === 'tun' && payload.tun && typeof payload.tun === 'object') ? payload.tun : undefined;
+
+    const proxyConsistency = String(payload.proxyConsistency || payload.onMismatch || 'warn');
+    const createdAt = Date.now();
+    const created = [];
+    const newlyBound = new Set();
+
+    for (let i = 0; i < picked.length; i++) {
+        const node = picked[i];
+        const bindId = node && node.id ? String(node.id) : '';
+        if (!bindId) continue;
+        if (boundSet.has(bindId) || newlyBound.has(bindId)) continue;
+        const proxyStr = node && node.url ? String(node.url) : '';
+        if (!proxyStr) continue;
+
+        let name = '';
+        if (namePrefixRaw) {
+            name = picked.length > 1
+                ? `${namePrefixRaw}-${String(i + 1).padStart(2, '0')}`
+                : namePrefixRaw;
+        } else {
+            const label = city ? `${country} ${city}` : country;
+            name = picked.length > 1
+                ? `${label}-${String(i + 1).padStart(2, '0')}`
+                : label;
+        }
+
+        const fingerprint = generateFingerprint();
+        if (timezone) fingerprint.timezone = timezone;
+        if (language && language !== 'auto') fingerprint.language = language;
+
+        const consistencyPolicy = { enforce: true, onMismatch: proxyConsistency };
+        const allowAutofix = { language: proxyConsistency === 'autofix', geo: proxyConsistency === 'autofix' };
+
+        const newProfile = {
+            id: uuidv4(),
+            name,
+            proxyStr,
+            proxyBindId: bindId,
+            proxyEngine,
+            proxyMode,
+            tun,
+            tags,
+            fingerprint,
+            proxyPolicy: { autoLink: true, consistencyPolicy, allowAutofix },
+            preProxyOverride: 'default',
+            isSetup: false,
+            createdAt: createdAt + i
+        };
+
+        profiles.push(newProfile);
+        newlyBound.add(bindId);
+        created.push({ id: newProfile.id, name: newProfile.name, proxyBindId: bindId });
+    }
+
+    await fs.writeJson(PROFILES_FILE, profiles);
+
+    // Persist cursor for round_robin.
+    if (!settings.proxyAllocatorCursor || typeof settings.proxyAllocatorCursor !== 'object') {
+        settings.proxyAllocatorCursor = {};
+    }
+    if (strategy === 'round_robin' && nextCursorId) {
+        settings.proxyAllocatorCursor[regionKey] = nextCursorId;
+    }
+    await fs.writeJson(SETTINGS_FILE, settings);
+
+    return {
+        success: true,
+        requestedCount,
+        createdCount: created.length,
+        shortage,
+        strategy,
+        region: { country, city },
+        cursorId: strategy === 'round_robin' ? (settings.proxyAllocatorCursor[regionKey] || '') : '',
+        createdProfiles: created,
+    };
+});
+
 const DEBUG_PROXY_TEST = (process.env.GEEKEZ_DEBUG_PROXY_TEST === '1') || (isDev && process.env.GEEKEZ_DEBUG_PROXY_TEST !== '0');
 const DEBUG_PROXY_TEST_KEEP_CONFIG = (process.env.GEEKEZ_DEBUG_PROXY_TEST_KEEP_CONFIG === '1');
 
